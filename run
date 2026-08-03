@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+#
+# run — the operational entry point.
+#
+# A dispatcher rather than a Makefile: it sources scripts/lib.sh, so config
+# loading, the terraform wrapper and the ssh helpers have exactly one definition
+# in this repo. Arguments pass straight through (./run verify --quick), and there
+# is no second layer of $-escaping to get wrong.
+#
+#   ./run                 list the commands
+#   ./run up              converge to the verified good state (the one to use)
+#   ./run rebuild         full cycle from nothing, destroying the data disk
+#   ./run <cmd> [args]    everything else
+#
+set -euo pipefail
+# shellcheck source=scripts/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/lib.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: ./run <command> [args]
+
+  up [--quick]     THE command. Converge everything to the verified good state
+                   from whatever state it is in now, and prove it. Idempotent,
+                   and never destroys anything — safe to run any time.
+
+Lifecycle
+  bootstrap        State bucket + backend.tf + terraform init + mint a one-off auth key
+  plan             Show the Terraform plan
+  apply            Create/update the infrastructure
+  wait [--packages] Block until the VM is on the tailnet and its startup script
+                   finished; --packages also waits for the deferred browser stack
+  phone            Re-key the phone to the VM's CURRENT notify pubkey (idempotent)
+  verify [--quick] Assert the entire end state (non-zero exit on any drift)
+  verify-browser   Just the browser stack (chromium/Xvfb/zram/CDP). Runs as a
+                   sidecar inside verify; standalone for when phase B was still
+                   installing and verify SKIPped it.
+  rebuild          FROM SCRATCH: cleanup -> bootstrap -> apply -> wait -> phone -> verify
+                   Destroys the data disk. Use `up` unless you mean that.
+  cleanup [flags]  Tear down + delete the tailnet node (--yes, --keep-bucket, --keep-files, --force)
+
+Tailscale
+  mint-key         Mint a fresh one-off auth key into terraform/tailscale.auto.tfvars
+  check-key        Assert that key is still usable (apply does this for you)
+  rekey [--reboot] Get a fresh key into an EXISTING VM. `apply` alone cannot:
+                   GCE only runs startup-script at boot, so a metadata-only
+                   update is never read and the key is never consumed.
+  list-nodes       List tailnet devices
+  delete-node [n]  Delete this instance's node (and any -N duplicate)
+
+Misc
+  ssh [args]       SSH to the box over Tailscale (interactive)
+  tf <args>        Raw terraform in terraform/ (e.g. ./run tf state list)
+  fmt              terraform fmt
+  validate         terraform fmt -check + validate + bash -n on every script
+  check            validate + verify
+EOF
+}
+
+cmd="${1:-help}"
+[[ $# -gt 0 ]] && shift
+
+case "$cmd" in
+help | -h | --help) usage ;;
+
+# The one command. Everything below it is a step `up` already runs in order, kept
+# individually callable for when you want just that step.
+up) scripts/up.sh "$@" ;;
+
+# --- Lifecycle ---------------------------------------------------------
+bootstrap) scripts/bootstrap.sh "$@" ;;
+plan)
+  load_config
+  tf plan "$@"
+  ;;
+apply)
+  load_config
+  # A dead auth key is invisible until the VM has booted and silently failed to
+  # join the tailnet — at which point it is unreachable by design. Catch it here,
+  # while it still costs nothing.
+  scripts/tailscale-api.sh check
+  tf apply "$@"
+  ;;
+wait) scripts/wait-ready.sh "$@" ;;
+phone) scripts/provision-phone.sh "$@" ;;
+verify) scripts/verify.sh "$@" ;;
+verify-browser) scripts/verify-browser.sh "$@" ;;
+cleanup) scripts/cleanup.sh "$@" ;;
+
+# The one command that matters. set -e stops at the first failing step, so a
+# broken build never silently proceeds to "verified".
+rebuild)
+  for step in \
+    "scripts/cleanup.sh" \
+    "scripts/bootstrap.sh" \
+    "APPLY" \
+    "scripts/wait-ready.sh" \
+    "scripts/provision-phone.sh" \
+    "scripts/verify.sh"; do
+    printf '\n\033[1m=== %s\033[0m\n' "$step"
+    if [[ "$step" == "APPLY" ]]; then
+      load_config
+      scripts/tailscale-api.sh check
+      tf apply -auto-approve
+    else
+      "$step"
+    fi
+  done
+  printf '\n\033[1;32mRebuild complete and verified.\033[0m\n'
+  ;;
+
+# --- Tailscale ---------------------------------------------------------
+mint-key) scripts/tailscale-api.sh mint ;;
+check-key) scripts/tailscale-api.sh check ;;
+rekey) scripts/rekey.sh "$@" ;;
+list-nodes) scripts/tailscale-api.sh list ;;
+delete-node) scripts/tailscale-api.sh delete-node "$@" ;;
+
+# --- Misc --------------------------------------------------------------
+ssh)
+  load_config
+  # Deliberately NOT ssh_vm: that sets BatchMode=yes, which suppresses the
+  # interactive prompts (and Tailscale's check-mode URL) you need here.
+  ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$INSTANCE" "$@"
+  ;;
+tf)
+  load_config
+  tf "$@"
+  ;;
+fmt) tf fmt ;;
+validate)
+  load_config
+  tf fmt -check
+  # `terraform validate` needs the provider schemas, which live in .terraform.
+  # On a clean checkout — or after a cleanup wiped it — that directory is absent
+  # and validate fails with "no package ... cached" rather than telling you
+  # anything about the configuration. `-backend=false` fetches the providers
+  # without touching (or requiring) the GCS backend, so validate stays a purely
+  # local, side-effect-free check that works before any infrastructure exists.
+  [[ -d "$TF_DIR/.terraform" ]] || tf init -backend=false -input=false >/dev/null
+  tf validate
+  for f in scripts/*.sh run; do bash -n "$f" || die "$f does not parse"; done
+  echo "all scripts parse"
+  ;;
+check)
+  "$0" validate
+  "$0" verify
+  ;;
+
+*)
+  echo "Unknown command: $cmd" >&2
+  echo >&2
+  usage >&2
+  exit 1
+  ;;
+esac
