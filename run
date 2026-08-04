@@ -49,6 +49,9 @@ Agents
                    LSP, not opencode, is the dominant per-client cost, and it
                    needs no model or API key to measure. --cmd "vtsls --stdio"
                    --root DIR --ext .ts --files N --settle S --quiet S --json
+  agent-run        Drive a real opencode agent session to do real work while
+                   ./run measure samples the box. Requires an opencode serve
+                   running with a provider connected; see scripts/drive-agent-loop.mjs
 
 Social  (platform defaults to linkedin, the only one wired up)
   login [pf]       Log a social account in BY HAND, in the browser on the box,

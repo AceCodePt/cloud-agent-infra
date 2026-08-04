@@ -162,7 +162,8 @@ Per client = 221 MB marginal opencode + its LSP. Against ~6.3 GB usable
 | Client profile | Per client | Fits in RAM |
 |---|---|---|
 | TypeScript on tsserver (default) | ~1480 MB | **~4** |
-| TypeScript on tsgo | ~420 MB | ~14 |
+| TypeScript on tsgo, idle | ~420 MB | ~14 |
+| TypeScript on tsgo, **active** | **~1000 MB** | ~6 |
 | Python on pyright | ~650 MB | ~9 |
 
 **Switching TypeScript clients from tsserver to tsgo is worth more than tripling
@@ -208,16 +209,46 @@ Per-client isolation makes this a per-client decision: each client's own
 `opencode.json` picks its LSP, so a client on a small repo can afford tsserver
 while a large one is moved to tsgo.
 
-### Driving real agent work needs a provider
+### A real agent, measured end to end
 
-Tool execution cannot be triggered over the API without a model:
-`/experimental/tool` only *lists* tools and requires `provider` and `model`
-query parameters. LSPs spawn lazily when a session's read/edit tool touches a
-file, so `GET /lsp` returns `[]` on a server nobody has prompted. Once a
-provider is connected, `POST /session/:id/message` drives an agent that runs
-tools for real, and `./run measure` alongside it captures the full picture —
-model streaming, tool subprocesses, builds and LSP together. That is the one
-remaining measurement, and it is the only one that needs credentials.
+The ceiling above was still idle until now. With a provider connected (opencode's
+free `big-pickle` model, so the measurement cost nothing) and tsgo wired in as
+the session LSP, an agent ran four rounds against `microsoft/TypeScript` with
+prompts to read `src/compiler/checker.ts` (54k lines) and `src/compiler/binder.ts`
+and enumerate their AST type-check functions. Real work happened:
+
+- **53k input tokens, 9.2k output, 7.8k reasoning, 1.39M cache reads** on one session
+- tsgo spawned as a session LSP (`GET /lsp` showed `{"id":"tsgo",status:"connected"}`)
+- `fs.read` tool calls against the repo (the snapshot hash moved on every round)
+
+`./run measure` alongside it:
+
+| Kind | Peak PSS |
+|---|---|
+| opencode | 687 MB |
+| lsp (tsgo) | 242–333 MB |
+| node (driver) | 56 MB |
+| **one working client, total** | **~1000 MB** |
+
+Peak 1-min load hit **3.60 on 2 vCPU** while the agent was mid-run, and stayed
+above 1.0 for a sustained stretch. `MemAvailable` cross-check agreed within ~140 MB.
+
+**What changed:** a *working* client costs about 1000 MB PSS, not 420 MB. And it
+is **CPU-bound**: one active agent on tsgo drove 2 vCPU to a load of 3.6. RAM is
+no longer the constraint at all — at 1000 MB/client the box fits ~6 clients, but
+**the CPU is saturated by roughly two actively-working agents.** This is the
+first measurement that speaks to concurrency, and it says: parallel active agents
+are the expensive thing, idle servers are nearly free.
+
+Model choice barely moves the memory number. The cost is tool subprocesses and
+LSP indexing; the model is a stream of tokens. Switching from the free model to
+opencode-go's cheapest would not have changed the table above.
+
+**Caveat for honesty:** these are short bursts (four rounds, minutes). A session
+that runs for an hour accumulates context, and 1.39M cache reads on one session
+is the model's context window, not the box's. The LSP peak may grow as a long
+session touches more of the repo. Re-measure with a real client workload and a
+longer run before committing to a concurrency number.
 
 ---
 
