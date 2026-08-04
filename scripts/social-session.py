@@ -33,6 +33,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -264,20 +265,49 @@ def main():
         print("LOGGED IN  (cookie evidence only; add --deep to prove the session is live)")
         return 0
 
-    jar = {}
-    for name in (spec["session"], spec.get("csrf")):
-        if name and name in by_name:
-            try:
-                jar[name] = decrypt(by_name[name]["enc"], by_name[name]["host"])
-            except RuntimeError as e:
-                print(f"UNKNOWN  {e}")
-                return 2
+    ua = args.ua or ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                     "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36")
+
+    def attempt():
+        """Read the cookies fresh, then probe. Fresh matters -- see below."""
+        jar = {}
+        for name in (spec["session"], spec.get("csrf")):
+            if not name:
+                continue
+            cur = {c["name"]: c for c in sorted(read_cookies(args.profile) or [],
+                                                key=lambda c: (c["host"] == spec["host"],
+                                                               c["updated"] or CHROME_EPOCH))}
+            if name in cur:
+                jar[name] = decrypt(cur[name]["enc"], cur[name]["host"])
+        return jar
+
+    try:
+        jar = attempt()
+    except RuntimeError as e:
+        print(f"UNKNOWN  {e}")
+        return 2
     if not jar.get(spec["session"]):
         print("UNKNOWN  session cookie decrypted to an empty value")
         return 2
 
-    ok, detail = probe(spec, jar, args.ua or "Mozilla/5.0 (X11; Linux x86_64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36")
+    ok, detail = probe(spec, jar, ua)
+
+    # Retry once on a CSRF failure, because there is a benign cause that looks
+    # identical to a real one. The CSRF cookie is a SESSION cookie: the browser
+    # rotates it when it starts, and the on-disk copy lags the value the server
+    # is expecting by a few seconds. Measured: 403 immediately after relaunching
+    # the browser, then HTTP 200 twenty seconds later from the same code.
+    # Reporting that as a failure would send you re-doing 2FA for no reason.
+    if not ok and "403" in detail:
+        print("         403 on the first try; the CSRF cookie rotates at browser")
+        print("         start and the disk copy lags. Re-reading in 12s...")
+        time.sleep(12)
+        try:
+            ok, detail = probe(spec, attempt(), ua)
+        except RuntimeError as e:
+            print(f"UNKNOWN  {e}")
+            return 2
+
     print(("LOGGED IN  " if ok else "NOT USABLE  ") + detail)
     return 0 if ok else 1
 
