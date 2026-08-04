@@ -2,31 +2,23 @@
 #
 # bootstrap.sh — one-time setup of the Terraform GCS state backend.
 #
-# Solves the chicken-and-egg problem: Terraform's state bucket can't be
-# managed by Terraform itself, so we create it here first, then hand off.
-#
-# What it does:
-#   1. Reads config from config.env (the single source of truth).
-#   2. Sets the active project and enables required APIs.
-#   3. Creates the GCS state bucket (idempotent) with versioning.
-#   4. Writes backend.tf and runs `terraform init`.
-#
-# Safe to re-run: the bucket create is guarded, versioning is idempotent.
+# Solves the chicken-and-egg problem: the state bucket can't be managed by
+# Terraform itself, so it's created here first, then handed off. Reads config
+# from config.env, sets the project + enables APIs, creates the versioned GCS
+# bucket (idempotent), writes backend.tf, runs terraform init. Safe to re-run.
 #
 # Usage:
-#   source ./config.env     # or let direnv do it
-#   ./bootstrap.sh
-#   ./bootstrap.sh --no-mint   # skip key minting; the caller owns that decision
+#   ./bootstrap.sh                # mint an auth key too
+#   ./bootstrap.sh --no-mint      # skip key minting; the caller owns that
 #
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_config
 
-# --no-mint exists for up.sh, which decides for itself whether a new key is
-# needed (it mints only when the current one is unusable). Minting here as well
-# would burn a key on every converge and leave a permanent metadata diff, so
-# "nothing changed" could never be observed.
+# --no-mint exists for up.sh, which mints only when the current key is unusable.
+# Minting here too would burn a key on every converge and leave a permanent
+# metadata diff, so "nothing changed" could never be observed.
 MINT=true
 for arg in "$@"; do
   case "$arg" in
@@ -37,18 +29,17 @@ done
 
 echo ">> project=$PROJECT_ID region=$REGION bucket=$STATE_BUCKET"
 
-# --- Fail fast on the things that only surface 4 minutes into a boot ----
+# Fail fast on the things that only surface 4 minutes into a boot.
 : "${TF_VAR_zone:?zone not set in config.env}"
 : "${TF_VAR_ssh_user:?ssh_user not set in config.env}"
 
-# A missing or malformed auth key is invisible until the VM has booted and
-# silently failed to join the tailnet — at which point the box is unreachable by
-# design and looks like a hang. So resolve it here, before anything is built.
+# A missing/malformed auth key is invisible until the VM boots, silently fails
+# to join the tailnet, and becomes unreachable by design — resolve it here first.
 if ! $MINT; then
   echo ">> Skipping auth-key minting (--no-mint)."
 elif [[ -n "${TAILSCALE_API_KEY:-}" ]]; then
   # Preferred path: mint a fresh one-off key per build. Nothing long-lived sits
-  # in config.env, and a spent key can never silently fail a later rebuild.
+  # in config.env; a spent key can never silently fail a later rebuild.
   if [[ -n "${TF_VAR_tailscale_auth_key:-}" ]]; then
     warn "both TAILSCALE_API_KEY and TF_VAR_tailscale_auth_key are set.
    The minted key wins (tailscale.auto.tfvars outranks TF_VAR_* env vars), so the
@@ -86,7 +77,7 @@ if command -v tailscale >/dev/null 2>&1; then
   fi
 fi
 
-# --- Sanity: are we authenticated? -------------------------------------
+# Sanity: authenticated?
 if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then
   echo "ERROR: no application-default credentials."
   echo "       Run: gcloud auth application-default login"
@@ -102,7 +93,7 @@ gcloud services enable \
   storage.googleapis.com \
   iap.googleapis.com
 
-# --- Create the state bucket (idempotent) ------------------------------
+# Create the state bucket (idempotent).
 if gcloud storage buckets describe "gs://${STATE_BUCKET}" >/dev/null 2>&1; then
   echo ">> Bucket gs://${STATE_BUCKET} already exists, skipping create"
 else
@@ -116,7 +107,7 @@ fi
 echo ">> Enabling versioning (state recovery)"
 gcloud storage buckets update "gs://${STATE_BUCKET}" --versioning
 
-# --- Write backend config + init ---------------------------------------
+# Write backend config + init.
 echo ">> Writing terraform/backend.tf"
 cat > "$TF_DIR/backend.tf" <<EOF
 terraform {
@@ -128,9 +119,8 @@ terraform {
 EOF
 
 echo ">> terraform init"
-# -input=false: bootstrap runs unattended inside `./run up`, and an init that
-# decides to ask something (backend migration, missing variable) must fail with
-# the question printed rather than block forever on a stdin nobody is watching.
+# -input=false: bootstrap runs unattended inside `./run up`; an init that asks
+# something must fail with the question printed, not block on unwatched stdin.
 tf init -input=false
 
 echo ">> Bootstrap complete. Next: make plan && make apply"

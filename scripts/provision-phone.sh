@@ -1,31 +1,21 @@
 #!/usr/bin/env bash
 #
 # provision-phone.sh — put the phone into the exact state notify-phone needs.
+# Run after every `terraform apply`; idempotent.
 #
-# Run this after every `terraform apply`. It is idempotent: re-running it is a
-# no-op when the phone is already correct.
-#
-# What it does:
-#   1. Installs the forced-command parser at ~/bin/notify-only (Pattern B).
-#   2. Makes Termux's sshd survive a reboot (clears runit's 'down' file, installs
-#      a Termux:Boot script).
-#   3. Re-keys ~/.ssh/authorized_keys: drops any stale *-notify-phone key and
+#   1. Installs the forced-command parser at ~/bin/notify-only.
+#   2. Makes Termux's sshd survive a reboot (clears runit's 'down' file,
+#      installs a Termux:Boot script).
+#   3. Re-keys ~/.ssh/authorized_keys: drops any stale *-notify-phone key,
 #      installs the VM's CURRENT pubkey behind restrict,command=.
 #
-# Why this exists: a full teardown destroys the data disk, so the VM generates a
-# NEW notify keypair on rebuild and the phone's pinned line goes stale. That
-# failure looks like `Permission denied (publickey)` from notify-phone.
+# Why it exists: a teardown destroys the data disk, so the VM generates a NEW
+# notify keypair on rebuild and the phone's pinned line goes stale — which looks
+# like `Permission denied (publickey)` from notify-phone.
 #
-# Safety properties (learned the hard way):
-#   - The VM pubkey is validated by ssh-keygen before use, so an empty or
-#     truncated value can never be written as a malformed authorized_keys line.
-#   - Only keys whose comment ends in `-notify-phone` are removed. Your laptop
-#     key is never touched.
-#   - authorized_keys is backed up, then re-validated; if any pre-existing key
-#     would be lost or the file no longer parses, it is rolled back.
-#
-# Usage:
-#   ./provision-phone.sh
+# Safety: the VM pubkey is validated by ssh-keygen before use; only keys whose
+# comment ends in `-notify-phone` are removed (your laptop key is untouched);
+# authorized_keys is backed up, re-validated, and rolled back if anything breaks.
 #
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
@@ -41,7 +31,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 phone() { ssh_phone "$@"; }
 
-# --- 0. Preflight -------------------------------------------------------
+# 0. Preflight
 note "phone=$PHONE_USER@$PHONE_HOST:$PHONE_PORT instance=$INSTANCE"
 
 if ! phone true 2>/dev/null; then
@@ -55,10 +45,10 @@ EOF
   exit 1
 fi
 
-# --- 1. Fetch the VM's current notify pubkey ----------------------------
-# Serial console first: it needs no SSH to the VM, so it works even when
-# Tailscale SSH is in check mode (which requires an interactive browser click).
-# The startup script echoes the pubkey when it generates the keypair.
+# 1. Fetch the VM's current notify pubkey. Serial console first: needs no SSH
+# to the VM, so it works even when Tailscale SSH is in check mode (which wants
+# an interactive browser click). The startup script echoes the pubkey on
+# generation.
 note "Fetching the VM's notify pubkey"
 VMKEY="$(
   gcloud_instance get-serial-port-output 2>/dev/null |
@@ -68,8 +58,7 @@ VMKEY="$(
 if [[ -z "$VMKEY" ]]; then
   # No key in the serial log: normal when the data disk (and its keypair)
   # survived the rebuild, since the script only echoes on generation.
-  note "not in the serial log (disk likely persisted); reading it from the VM"
-  VMKEY="$(
+  note "not in the serial log (disk likely persisted); reading it from the VM"  VMKEY="$(
     ssh_vm 'cat /mnt/data/ssh-termux/id_ed25519.pub' 2>/dev/null |
       grep -E '^ssh-ed25519 ' || true
   )"
@@ -82,13 +71,12 @@ fi
 
 # Validate with the real parser, not a regex guess: this is what stops an empty
 # or truncated value from being appended as a malformed line.
-printf '%s\n' "$VMKEY" >"$TMP/vm.pub"
-ssh-keygen -lf "$TMP/vm.pub" >/dev/null 2>&1 ||
+printf '%s\n' "$VMKEY" >"$TMP/vm.pub"ssh-keygen -lf "$TMP/vm.pub" >/dev/null 2>&1 ||
   die "refusing to install an unparsable pubkey: '$VMKEY'"
 VM_FPR="$(ssh-keygen -lf "$TMP/vm.pub" | awk '{print $2}')"
 note "VM notify key: $VM_FPR"
 
-# --- 2. Install the forced-command parser -------------------------------
+# 2. Install the forced-command parser.
 note "Installing ~/bin/notify-only"
 phone 'mkdir -p ~/bin && cat > ~/bin/notify-only && chmod 700 ~/bin/notify-only' <<'PARSER'
 #!/data/data/com.termux/files/usr/bin/python3
@@ -115,8 +103,8 @@ if not argv or argv[0] != "termux-notification":
 os.execv(BIN, argv)
 PARSER
 
-# --- 3. Make sshd survive a reboot --------------------------------------
-# Without this, notify-phone breaks silently the next time the phone reboots.
+# 3. Make sshd survive a reboot — without this, notify-phone breaks silently
+# the next time the phone reboots.
 note "Ensuring sshd starts on boot"
 phone 'rm -f "${PREFIX:-/data/data/com.termux/files/usr}/var/service/sshd/down"' 2>/dev/null || true
 phone 'mkdir -p ~/.termux/boot && cat > ~/.termux/boot/start-sshd.sh && chmod 700 ~/.termux/boot/start-sshd.sh' <<'BOOT'
@@ -131,7 +119,7 @@ if ! phone 'pm list packages 2>/dev/null | grep -q com.termux.boot'; then
   note "         after a reboot. Install it from F-Droid, then open it once."
 fi
 
-# --- 4. Re-key authorized_keys (atomic, validated, self-rolling-back) ---
+# 4. Re-key authorized_keys (atomic, validated, self-rolling-back).
 note "Installing the hardened notify line"
 
 # The value must NOT be passed as an ssh argument: ssh joins argv with spaces
@@ -180,7 +168,7 @@ echo "OK"
 REKEY
 } | phone 'bash -s'
 
-# --- 5. Confirm the phone now trusts exactly this key -------------------
+# 5. Confirm the phone now trusts exactly this key.
 PHONE_FPR="$(phone 'ssh-keygen -lf ~/.ssh/authorized_keys' | grep -- '-notify-phone' | awk '{print $2}')"
 [[ "$PHONE_FPR" == "$VM_FPR" ]] ||
   die "mismatch: phone trusts '$PHONE_FPR' but the VM holds '$VM_FPR'"

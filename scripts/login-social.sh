@@ -10,48 +10,38 @@
 #                                     authenticated request
 #   ./run login [platform] --stop     close the browser (SIGTERM, flushes cookies)
 #
-# platform defaults to linkedin, the only one wired up. Adding another means
-# adding a row to the table below plus one to PLATFORMS in social-session.py --
-# no new code. Deliberately not doing that yet: Meta enforcement cascades across
-# an Accounts Center, so LinkedIn should run cleanly for weeks before an account
-# there is exposed to the same setup.
+# platform defaults to linkedin, the only one wired up (one row in the table
+# below + one in social-session.py). Meta not wired yet: its enforcement
+# cascades across an Accounts Center, so LinkedIn should run cleanly for weeks
+# first.
 #
-# WHY THE LOGIN HAPPENS ON THE BOX, and not by copying a cookie from the laptop:
+# WHY LOGIN ON THE BOX, not by copying a cookie from the laptop: copying one
+# creates the session from a home address and uses it from me-west1 — an
+# IP-related signal with real reports behind it. Logging in here means session
+# creation and use share an egress. A cookie from a persistent profile also
+# lasts weeks-to-a-year (measured: li_at 364-day expiry) vs roughly an hour
+# for one lifted from a fresh/incognito context.
 #
-#   Copying a cookie creates the session from a home address and then uses it
-#   from me-west1 -- one of the few IP-related signals with real reports behind
-#   it. Logging in here means session creation and use share an egress, which is
-#   what a normal session looks like. A cookie from a persistent profile also
-#   lasts weeks-to-a-year (measured: li_at issued with a 364-day expiry) against
-#   roughly an hour for one lifted from a fresh or incognito context.
+# CHAIN (no CDP anywhere — social-chromium has no --remote-debugging-port;
+# Runtime.enable is the clearest automation marker there is):
 #
-# HOW IT WORKS
-#
-#   your VNC client -> localhost:5900 -> ssh tunnel -> box 127.0.0.1:5900
-#                   -> x11vnc -> Xvfb :99 (1920x1080x24) -> social-chromium
-#
-#   No CDP anywhere in that chain. social-chromium has no --remote-debugging-port
-#   at all, which is the entire reason for the indirection: calling Runtime.enable
-#   is the clearest automation marker there is.
+#   VNC client -> localhost:5900 -> ssh tunnel -> box 127.0.0.1:5900
+#             -> x11vnc -> Xvfb :99 (1920x1080x24) -> social-chromium
 #
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- Platform table -------------------------------------------------------
-# One row per platform: where to start the login, and which profile holds it.
-#
-# Separate profiles per platform on purpose. A shared profile means one cookie
-# jar, one cache and one fingerprint for several identities, so anything learned
-# about one account applies to the others. Separate directories keep them
-# independent and individually re-loginable. The cost is about 530 MB of RAM per
-# running browser (measured), which an 8 GB box can afford a few of.
+# Platform table: one row per platform. Separate profiles per platform on
+# purpose — a shared profile means one cookie jar/cache/fingerprint for several
+# identities, so anything learned about one applies to the others. Cost is
+# ~530 MB RAM per running browser (measured), which 8 GB affords a few of.
 declare -A P_URL=([linkedin]="https://www.linkedin.com/login")
 declare -A P_PROFILE=([linkedin]="/mnt/data/browser/social-linkedin")
 declare -A P_NAME=([linkedin]="LinkedIn")
 
-# --- Arguments ------------------------------------------------------------
+# Arguments.
 PLATFORM=linkedin
 MODE=login
 DEEP=""
@@ -74,27 +64,25 @@ PORT="${VNC_LOCAL_PORT:-5900}"
 
 load_config
 
-# Remote helper. The PATH fix-up is required because ss/systemctl live in
-# /usr/sbin, which is NOT on the PATH of a non-interactive ssh command -- the
-# same trap that once made this repo conclude the box had no swap.
+# Remote helper. The PATH fix-up: ss/systemctl live in /usr/sbin, which is NOT
+# on the PATH of a non-interactive ssh command — the same trap that once made
+# this repo conclude the box had no swap.
 rsh() { ssh_vm "export PATH=/usr/local/sbin:/usr/sbin:/sbin:\$PATH; $1"; }
 
-# The [u] is not a typo. `pgrep -f` matches every process's full command line, and
-# the shell ssh spawns to run this command HAS the pattern in its own command
-# line -- so a plain pattern reports the browser running when it is not. pgrep
-# excludes itself, never its parent. (Measured: 2 false positives without it.)
+# The [u] is not a typo: `pgrep -f` matches every process's full command line,
+# including the shell ssh spawned to run THIS command — a plain pattern would
+# report the browser running when it isn't. (Measured: 2 false positives.)
 browser_pid() { rsh "pgrep -f '[u]ser-data-dir=$PROFILE' | head -1" 2>/dev/null | tr -d '[:space:]'; }
 
 stop_vnc() {
   note "stopping x11vnc on the box"
   # reset-failed too: x11vnc traps SIGTERM and exits 2, so an ordinary stop is
-  # recorded as a failure and the unit stays failed forever. The unit now sets
-  # SuccessExitStatus=2, but a box provisioned before that still has the old one,
-  # and a bogus entry in `systemctl --failed` is how real failures get ignored.
+  # recorded as a failure and the unit stays failed forever (SuccessExitStatus=2
+  # fixes new boxes; a bogus --failed entry is how real failures get ignored).
   rsh "sudo -n systemctl stop x11vnc; sudo -n systemctl reset-failed x11vnc" 2>/dev/null || true
 }
 
-# Ship the verifier over each time rather than depending on a deploy step: it is
+# Ship the verifier over each time rather than depending on a deploy step: it's
 # 8 KB of stdlib Python, and a stale copy on the box would be worse than useless.
 verify_session() {
   rsh "cat > /tmp/social-session.py" <scripts/social-session.py 2>/dev/null ||
@@ -103,28 +91,28 @@ verify_session() {
 }
 
 case "$MODE" in
-# --- verify ------------------------------------------------------------
+# verify
 verify)
   printf '\033[1m%s session in %s\033[0m\n' "$NAME" "$PROFILE"
   if verify_session; then
     exit 0
   else
     rc=$?
-    # 1 = not logged in, 2 = could not determine. Different problems: the first
-    # needs a login, the second needs looking at.
+    # 1 = not logged in, 2 = could not determine — the first needs a login, the
+    # second needs looking at.
     [[ $rc -eq 1 ]] && echo && note "log in with: ./run login $PLATFORM"
     exit "$rc"
   fi
   ;;
 
-# --- stop --------------------------------------------------------------
+# stop
 stop)
   stop_vnc
   pid="$(browser_pid)"
   if [[ -n "$pid" ]]; then
     note "stopping $NAME browser (pid $pid)"
-    # SIGTERM, never -9: Chromium must flush Cookies and Local State to disk,
-    # and killing it hard is a good way to lose the session you just created.
+    # SIGTERM, never -9: Chromium must flush Cookies and Local State to disk —
+    # killing it hard is a good way to lose the session you just created.
     rsh "kill $pid" || true
     sleep 3
   else
@@ -133,11 +121,10 @@ stop)
   echo "stopped."
   ;;
 
-# --- login -------------------------------------------------------------
+# login
 login)
   # Preflight in increasing order of cost, so the common failure (no client
-  # installed) costs nothing. Each check exists because its absence otherwise
-  # surfaces later as a black window, a refused tunnel, or a missing binary.
+  # installed) costs nothing.
   viewer=""
   for c in vncviewer wlvncc gvncviewer remmina vinagre; do
     if command -v "$c" >/dev/null 2>&1; then
@@ -160,8 +147,8 @@ login)
   Re-run with a different port:  VNC_LOCAL_PORT=5901 ./run login $PLATFORM"
   fi
 
-  # Already logged in? Say so instead of silently re-doing 2FA. Not fatal --
-  # re-logging in is exactly how you recover an expired session.
+  # Already logged in? Say so instead of silently re-doing 2FA (re-logging in is
+  # exactly how you recover an expired session).
   if verify_session >/dev/null 2>&1; then
     note "$NAME already has a valid session; opening the browser anyway"
   fi
@@ -177,8 +164,7 @@ login)
     note "launching social-chromium for $NAME on :99 at $URL"
     # setsid + nohup + closed stdin: without all three the browser is a child of
     # this ssh session and dies with it, taking a half-finished login with it.
-    # Forward SOCIAL_WINDOW_SIZE if set, so the user can size the browser to
-    # their own screen:  SOCIAL_WINDOW_SIZE=1440,900 ./run login linkedin
+    # SOCIAL_WINDOW_SIZE (optional) sizes the browser to the user's own screen.
     WINSIZE="${SOCIAL_WINDOW_SIZE:-}"
     rsh "SOCIAL_PROFILE_DIR='$PROFILE' ${WINSIZE:+SOCIAL_WINDOW_SIZE='$WINSIZE' }setsid nohup social-chromium '$URL' \
       >/tmp/social-chromium-$PLATFORM.log 2>&1 </dev/null & disown" || true
@@ -226,7 +212,7 @@ EOF
   *) "$viewer" "vnc://localhost:$PORT" || true ;;
   esac
 
-  # Don't assume it worked -- check.
+  # Don't assume it worked — check.
   echo
   printf '\033[1mVerifying...\033[0m\n'
   if verify_session; then

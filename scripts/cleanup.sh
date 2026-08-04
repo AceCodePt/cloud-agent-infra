@@ -1,29 +1,18 @@
 #!/usr/bin/env bash
 #
-# cleanup.sh — tear down the cloud-agent infrastructure (full wipe by default).
-#
-# By default this:
+# cleanup.sh — tear down the cloud-agent infrastructure (full wipe by default):
 #   1. terraform destroy       -> removes the VM + attached data disk
-#   2. deletes the GCS state bucket (and all its contents/versions)
+#   2. deletes the GCS state bucket (all contents/versions)
 #   3. removes local Terraform artifacts (.terraform, lockfile, backend.tf, state)
 #
-# The state bucket is NOT created by Terraform (chicken-and-egg), so
-# Terraform can't destroy it — we remove it explicitly.
+# The state bucket isn't created by Terraform (chicken-and-egg), so it's removed
+# explicitly. SAFETY: the state bucket and backend.tf are the only pointers to
+# live resources; deleting them while the VM/disk still exist orphans that
+# infrastructure and keeps it billing. Both wipes are gated on the resources
+# actually being gone (verified with gcloud, not the destroy's exit code);
+# --force overrides.
 #
-# SAFETY: the state bucket and backend.tf are the only pointers to live
-# resources. Deleting them while the VM/disk still exist orphans that
-# infrastructure: Terraform forgets it, this script can no longer destroy it
-# (see the backend.tf guard below), and it keeps billing. So both wipes are
-# gated on the resources actually being gone, verified with gcloud rather than
-# assumed from the destroy's exit code. Override with --force if you really mean
-# it.
-#
-# Usage:
-#   ./cleanup.sh              # FULL wipe: compute + bucket + local files
-#   ./cleanup.sh --keep-bucket # keep the GCS state bucket
-#   ./cleanup.sh --keep-files  # keep local Terraform artifacts
-#   ./cleanup.sh --yes         # skip confirmation prompts
-#   ./cleanup.sh --force       # wipe bucket/files even if resources still exist
+# Usage: ./cleanup.sh [--keep-bucket] [--keep-files] [--yes] [--force]
 #
 set -euo pipefail
 
@@ -41,7 +30,7 @@ for arg in "$@"; do
   esac
 done
 
-# --- Load the single source of truth -----------------------------------
+# Load the single source of truth.
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_config
@@ -55,7 +44,7 @@ confirm() {
   [[ "$ans" == "y" || "$ans" == "Y" ]]
 }
 
-# --- 1. Destroy compute via Terraform ----------------------------------
+# 1. Destroy compute via Terraform.
 if [[ -f "$TF_DIR/backend.tf" && -d "$TF_DIR/.terraform" ]]; then
   echo ">> Destroying Terraform-managed resources (VM, disk, etc.)"
   if confirm "Run 'terraform destroy'? This deletes the VM and data disk."; then
@@ -75,7 +64,7 @@ else
   echo "     gcloud compute instances delete ${TF_VAR_instance_name:-cloud-agent} --zone ${TF_VAR_zone:-me-west1-a}"
 fi
 
-# --- 1b. Refuse to throw away the pointers to live resources -----------
+# 1b. Refuse to throw away the pointers to live resources.
 LIVE="$(live_resources)"
 if [[ -n "$LIVE" ]]; then
   echo ">> WARNING: these resources still exist: $LIVE"
@@ -93,11 +82,10 @@ else
   echo ">> Verified with gcloud: no instance or data disk remains."
 fi
 
-# --- 1c. Remove the tailnet node ---------------------------------------
-# Only once the instance is verifiably gone: deleting the node of a LIVE VM
-# orphans it (tailscaled's persisted identity 404s and it cannot rejoin without
-# a fresh auth key). Leaving it behind is also harmful — the stale node keeps the
-# MagicDNS name and the next build becomes ${INSTANCE}-1.
+# 1c. Remove the tailnet node — only once the instance is verifiably gone:
+# deleting the node of a LIVE VM orphans it (tailscaled 404s, can't rejoin
+# without a fresh key); leaving a stale node keeps the MagicDNS name and the
+# next build joins as ${INSTANCE}-1.
 if [[ -n "${TAILSCALE_API_KEY:-}" ]]; then
   if [[ -z "$LIVE" ]] || $FORCE; then
     "$SCRIPT_DIR"/tailscale-api.sh delete-node || echo ">> WARNING: node deletion failed; remove it manually."
@@ -110,13 +98,12 @@ else
   echo "   Delete it manually or the next build joins as ${INSTANCE}-1."
 fi
 
-# --- 2. Delete the state bucket (default) ------------------------------
+# 2. Delete the state bucket (default).
 if $DELETE_BUCKET; then
   if gcloud storage buckets describe "gs://${STATE_BUCKET}" >/dev/null 2>&1; then
     echo ">> WARNING: deleting the state bucket destroys all Terraform state history."
     if confirm "Delete gs://${STATE_BUCKET} and ALL its contents?"; then
-      # --recursive removes objects (incl. versioned) then the bucket
-      gcloud storage rm --recursive "gs://${STATE_BUCKET}"
+      gcloud storage rm --recursive "gs://${STATE_BUCKET}"   # removes objects incl. versioned, then the bucket
       echo ">> Bucket deleted."
     else
       echo ">> Skipped bucket deletion."
@@ -128,13 +115,12 @@ else
   echo ">> Keeping state bucket gs://${STATE_BUCKET} (--keep-bucket)."
 fi
 
-# --- 3. Remove local Terraform artifacts (default) ---------------------
+# 3. Remove local Terraform artifacts (default).
 if $DELETE_FILES; then
   echo ">> Removing local Terraform artifacts for a clean slate."
   if confirm "Delete terraform/{.terraform,backend.tf,*.tfstate,tailscale.auto.tfvars}?"; then
-    # .terraform.lock.hcl is deliberately NOT deleted: it is committed, and
-    # keeping it pins the provider version across rebuilds instead of silently
-    # picking up a newer one on the next init.
+    # .terraform.lock.hcl is deliberately kept: committed, it pins the provider
+    # version across rebuilds instead of silently upgrading on the next init.
     rm -rf "$TF_DIR/.terraform" "$TF_DIR/backend.tf" \
       "$TF_DIR/terraform.tfstate" "$TF_DIR/terraform.tfstate.backup" \
       "$TF_DIR/tailscale.auto.tfvars"

@@ -4,24 +4,21 @@
 # admin-console steps.
 #
 # Subcommands:
-#   mint          Create a ONE-OFF (single-use), pre-approved auth key and write
-#                 it to tailscale.auto.tfvars, which Terraform auto-loads.
-#   check         Assert the auth key Terraform is about to bake into the VM is
-#                 actually usable. Run before every apply.
-#   delete-node   Remove the instance's node (and any <name>-N duplicate) from
-#                 the tailnet, so the next build gets the clean MagicDNS name.
+#   mint          Create a ONE-OFF (single-use), pre-approved auth key, write it
+#                 to tailscale.auto.tfvars (auto-loaded by Terraform).
+#   check         Assert the auth key Terraform is about to bake in is usable.
+#   delete-node   Remove the instance's node (+ any <name>-N duplicate), so the
+#                 next build gets the clean MagicDNS name.
 #   list          Show the tailnet's devices (read-only).
 #
-# Auth: TAILSCALE_API_KEY in config.env. This is a *tailnet-admin* credential —
-# it can mint keys and delete any device — so it deliberately never reaches the
-# VM; only the minted single-use auth key does. A scoped OAuth client
-# (auth_keys + devices) is the better long-term choice than a personal API key.
+# Auth: TAILSCALE_API_KEY in config.env — a tailnet-ADMIN credential that can
+# mint keys and delete devices, so it never reaches the VM; only the minted
+# single-use key does. A scoped OAuth client is the better long-term choice.
 #
-# WARNING: deleting the node of a *running* VM orphans it. tailscaled keeps its
+# WARNING: deleting the node of a RUNNING VM orphans it: tailscaled keeps its
 # node identity on the data disk, and once the node is gone server-side every
-# netmap poll fails with `404: node not found` — it cannot rejoin without a
-# fresh auth key. cleanup.sh therefore only deletes the node once the instance
-# is verifiably gone.
+# netmap poll fails `404: node not found` — it can't rejoin without a fresh key.
+# cleanup.sh only deletes the node once the instance is verifiably gone.
 #
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
@@ -55,9 +52,8 @@ api() {
   body="$(printf '%s' "$out" | sed '$d')"
 
   if [[ "$code" -ge 400 ]]; then
-    # Map the failures you actually hit to something actionable. A bare
-    # "HTTP 401" during bootstrap is indistinguishable from a network blip, and
-    # the whole build then fails for a reason that reads like infrastructure.
+    # Map the failures you actually hit to something actionable — a bare
+    # "HTTP 401" during bootstrap looks like infrastructure failing.
     case "$code" in
     401)
       die "your Tailscale API key is no good (HTTP 401 Unauthorized).
@@ -199,16 +195,14 @@ PY
   fi
 }
 
-# Assert the auth key is still usable BEFORE terraform bakes it into the startup
-# script. Without this, a key that was revoked (or spent) between `mint` and
-# `apply` produces a VM that boots fine, fails `tailscale up`, and is then
-# unreachable by design — a five-minute wait ending in a timeout that looks like
-# an infrastructure fault rather than a dead credential.
+# Assert the auth key is usable BEFORE terraform bakes it in: a key revoked or
+# spent between mint and apply produces a VM that boots, fails `tailscale up`,
+# and is unreachable by design — a five-minute timeout that looks like
+# infrastructure rather than a dead credential.
 #
-# One-off keys are marked revoked+invalid the moment they are CONSUMED, so an
-# invalid key is only an error when the node still needs it. If $INSTANCE is
-# already on the tailnet the spent key is expected, and blocking an unrelated
-# apply over it would be wrong — hence warn, don't die.
+# One-off keys are marked invalid the moment they're CONSUMED, so an invalid key
+# is only an error when the node still needs it. If $INSTANCE is already on the
+# tailnet the spent key is expected — warn, don't die.
 cmd_check() {
   local key id
   key="$(effective_auth_key)"
