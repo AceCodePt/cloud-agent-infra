@@ -39,11 +39,19 @@ Lifecycle
                    Destroys the data disk. Use `up` unless you mean that.
   cleanup [flags]  Tear down + delete the tailnet node (--yes, --keep-bucket, --keep-files, --force)
 
-Social
-  login [--stop]   Log a social account in BY HAND, in the browser on the box,
+Social  (platform defaults to linkedin, the only one wired up)
+  login [pf]       Log a social account in BY HAND, in the browser on the box,
                    over VNC through an SSH tunnel. Do this once; the profile on
-                   the data disk then keeps the session for weeks. Never copy a
-                   cookie from your laptop instead -- see the script's header.
+                   the data disk then keeps the session (measured: li_at issued
+                   with a 364-day expiry). Never copy a cookie from your laptop
+                   instead -- see the script's header for why.
+  login [pf] --verify [--deep]
+                   Is it still logged in? Default reads the profile's cookie jar
+                   and sends no traffic at all. --deep additionally makes ONE
+                   authenticated request, which proves the session is live AND
+                   works from the box's egress. Exit 0 logged in, 1 not, 2 can't tell.
+  login [pf] --stop
+                   Close that platform's browser (SIGTERM, so cookies flush)
 
 Tailscale
   mint-key         Mint a fresh one-off auth key into terraform/tailscale.auto.tfvars
