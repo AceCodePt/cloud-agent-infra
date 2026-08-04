@@ -10,17 +10,27 @@ settled questions being re-argued from memory.
 
 ## Goals
 
-In the order they were stated. Only goal 1 exists.
+Numbered in the order they were first stated, which is NOT their priority. The
+priority column is what matters.
 
-| # | Goal | State |
-|---|---|---|
-| 1 | A reliable, reproducible cloud box reachable only over Tailscale, able to notify the phone | **Built. 31/31 verified.** |
-| 2 | Track posts in the LinkedIn feed and notify the phone | Not started |
-| 3 | Extend to Facebook + Instagram: notify about relevant comments and suggest replies | Not started |
-| 4 | A coding box running multiple agents for multiple client companies, with agent-driven browser testing | **Not started, not specified** |
+| # | Goal | Priority | State |
+|---|---|---|---|
+| 4 | Agentic workflows for client companies: multiple agents, isolated per client, with agent-driven browser testing | **PRIMARY — the reason the machine exists** | **Not started, not specified** |
+| 1 | A reliable, reproducible cloud box reachable only over Tailscale, able to notify the phone | Substrate for the above | **Built. 31/31 verified.** |
+| 2 | Track posts in the LinkedIn feed and notify the phone | Secondary | Logged in + session verified; feed reading not built |
+| 3 | Extend to Facebook + Instagram: relevant comments, suggest replies | Secondary | Not started |
 
-Goal 4 drives all infrastructure sizing and is the one with no concrete
-definition. That is the project's central open question.
+**The primary goal has nothing built and no design.** The box has no `opencode`,
+no `claude`, no container runtime, no `gh`, and no client checkouts; `/mnt/data`
+holds only the browser profiles, the Tailscale state and the phone key.
+
+Goals 2 and 3 are, by comparison, well advanced — which is an inversion worth
+naming. Effort followed whatever was concrete and measurable (fingerprints have
+crisp right answers) rather than what mattered most, and this table previously
+listed goals in stated-order with no priority column, which made that easy to do.
+Sizing is downstream of goal 4 and cannot be settled until goal 4 is defined:
+2 vCPU / 8 GB is already visible in the fingerprint as `hardwareConcurrency: 2`,
+and several concurrent agents plus browsers will not fit it.
 
 ---
 
