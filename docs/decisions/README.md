@@ -42,25 +42,22 @@ the premise is unevidenced".
 | Right-sizing the box | Parked |
 | Provider migration | Parked |
 
-### [browser-and-social.md](browser-and-social.md) — browsers, fingerprints, social accounts
+### [browser-and-social.md](browser-and-social.md) — the box's shared browser
 
 | Decision | Status |
 |---|---|
 | Two browsers split by purpose; the social one never speaks CDP | Made |
-| Extension + local WebSocket controller instead of CDP | Made |
-| Private, unlisted extension; no `web_accessible_resources`; no DOM writes | Made |
 | Headful Chromium on Xvfb, no window manager | Made |
 | Coherence over invisibility (real TZ, real-looking WebGL, no spoof flags) | Made |
-| Run the browser locally, not on a hosted CDP service | Made |
-| Log in by hand on the box; never copy a cookie from the laptop | Made |
-| No proxy, no exit-node egress, no residential IP | Made |
-| No scheduled poller; read-only; randomised spacing | Made |
-| Constraints on how the reader reads (notifications first, harvest mid-scroll, status codes) | Made |
-| ToS exposure, stated plainly | Accepted risk |
-| Openbox | Rejected |
 | Thorium instead of Debian's Chromium | Rejected |
 | Block media via CDP to save bandwidth | Superseded |
-| Meta (Facebook/Instagram) | Parked |
+
+Everything about the logged-in social account — the extension/controller
+architecture, how logins happen, the reader's read constraints, the ToS
+exposure — lives with the app that owns it:
+[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader)
+(`docs/decisions/browser-and-social.md` there). This repo only builds the box
+the browser runs on.
 
 ### [agents-and-sizing.md](agents-and-sizing.md) — the agent runner and how the box is sized
 

@@ -57,19 +57,13 @@ Agents
                    provider connected. See docs/measurements.md — the concurrency
                    ramp (slow-but-alive, never halt) lives there.
 
-Social  (platform defaults to linkedin, the only one wired up)
-  login [pf]       Log a social account in BY HAND, in the browser on the box,
-                   over VNC through an SSH tunnel. Do this once; the profile on
-                   the data disk then keeps the session (measured: li_at issued
-                   with a 364-day expiry). Never copy a cookie from your laptop
-                   instead -- see the script's header for why.
-  login [pf] --verify [--deep]
-                   Is it still logged in? Default reads the profile's cookie jar
-                   and sends no traffic at all. --deep additionally makes ONE
-                   authenticated request, which proves the session is live AND
-                   works from the box's egress. Exit 0 logged in, 1 not, 2 can't tell.
-  login [pf] --stop
-                   Close that platform's browser (SIGTERM, so cookies flush)
+Browser
+  browser [url]   Reach the box's virtual display and drive the SHARED browser
+                  in it, by hand, over VNC through an SSH tunnel. The browser
+                  is infra; whatever runs in it (a login, an app under test) is
+                  up to the caller. BROWSER_CMD / BROWSER_PROFILE_DIR /
+                  VNC_LOCAL_PORT override the defaults.
+  browser --stop  Stop the browser (SIGTERM, flushes cookies) and x11vnc
 
 Tailscale
   mint-key         Mint a fresh one-off auth key into terraform/tailscale.auto.tfvars
@@ -158,8 +152,8 @@ lsp-probe)
   ssh_vm "node /tmp/lsp-probe.mjs $(printf '%q ' "$@")"
   ;;
 
-# --- Social ------------------------------------------------------------
-login) scripts/login-social.sh "$@" ;;
+# --- Browser ----------------------------------------------------------
+browser) scripts/browser.sh "$@" ;;
 
 # --- Tailscale ---------------------------------------------------------
 mint-key) scripts/tailscale-api.sh mint ;;

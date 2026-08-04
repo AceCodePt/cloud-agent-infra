@@ -41,13 +41,16 @@ or pushed over ssh for measurement). Every table below says which.
 Real agent sessions (a connected model, tool calls, LSP spawn) are hand-driven
 over ssh — see §3; deliberately not wired into `./run`.
 
-### Social — one-time login and session proof
+### Browser — reach the box's display, by hand
 
 | Command | What it does | Dispatches |
 |---|---|---|
-| `./run login [platform]` | Log a social account in BY HAND, over VNC through an SSH tunnel (once) | `scripts/login-social.sh` |
-| `./run login [pf] --verify [--deep]` | Still logged in? Default: cookie jar only. `--deep`: +1 authenticated request. Exit 0/1/2 | `scripts/login-social.sh` + `social-session.py` |
-| `./run login [pf] --stop` | SIGTERM that platform's browser (cookies flush) | `scripts/login-social.sh` |
+| `./run browser [url]` | Open the **shared** browser on the box and tunnel VNC into it — drive whatever runs in it by hand | `scripts/browser.sh` |
+| `./run browser --stop` | Stop the browser (SIGTERM, flushes cookies) and `x11vnc` | `scripts/browser.sh` |
+
+The browser is infra; what runs in it (a login, an app under test, an agent's
+UI) belongs to the caller. `BROWSER_CMD`, `BROWSER_PROFILE_DIR`, and
+`VNC_LOCAL_PORT` override the defaults.
 
 ### Tailscale
 
@@ -134,11 +137,11 @@ Result (from the ramp): completion stays 100% from K=2 to K=24; the box degrades
 gracefully (load to ~11, MemAvailable never below ~2.5 GB, swap ≤121 MB), it does
 not halt. Details and caveats in `docs/measurements.md`.
 
-### Social — one login, then proof
+### Browser — one VNC session, then you're in
 
 ```
-./run login linkedin        # by hand, over VNC, on the box (once; li_at ≈364 days)
-./run login linkedin --verify      # cookie jar only — no traffic
-./run login linkedin --verify --deep   # +1 authenticated request (proves live egress)
-./run login linkedin --stop         # SIGTERM the browser (flushes cookies)
+./run browser about:blank      # open the shared browser, tunnel VNC, hand you the screen
+./run browser https://example.com
+BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 ./run browser   # pick a profile
+./run browser --stop           # SIGTERM the browser (flushes cookies)
 ```

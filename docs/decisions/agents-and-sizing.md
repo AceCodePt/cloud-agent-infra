@@ -84,9 +84,10 @@ Measured, and it inverts the earlier assumption:
 So RAM fits roughly six working clients while the CPU saturates at about **two
 actively-working agents**. Any resize buys cores, not gigabytes.
 
-Second-order consequence for goal 2: do not leave the social browser sitting on
-`/feed/` between reads. Park it on `about:blank`, or stop it and let
-`./run login --verify` read the cookie jar with no browser running at all.
+Second-order consequence for the social reader (owned by the linkedin-reader
+repo): do not leave the social browser sitting on `/feed/` between reads. Park it
+on `about:blank`, or stop it and read the cookie jar with no browser running at
+all.
 
 ## Overload is graceful, not a halt — **Made**
 

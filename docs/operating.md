@@ -182,27 +182,28 @@ needs it; a spent key on an already-joined node is expected and only warns.
 
 ---
 
-## Browsers: two of them, and the difference matters
+## Browsers: the box's shared browser, and how to look at it
 
 Agents get a **real browser** — many sites block `HeadlessChrome`, so the box
 runs Chromium *headed* on a virtual display: **Xvfb** provides a 1920×1080 screen
 (`DISPLAY :99`, pre-set in every login shell and tmux) and Chromium renders into
 it like a normal browser. No desktop or window manager.
 
-Two wrappers — using the wrong one is the one mistake here with a lasting cost:
+There are two wrappers — using the wrong one is the one mistake here with a
+lasting cost:
 
 | | `headed-chromium` | `social-chromium` |
 |---|---|---|
 | For | testing **our own** apps | a **real account** that is logged in |
 | CDP | yes, `CDP_PORT` (default 9222) | **never** — refuses, exit 64 |
 | Profile | `/mnt/data/browser/default` | `/mnt/data/browser/social-<platform>` |
-| Control | Playwright / CDP | by hand today; an extension over a local WebSocket once built |
+| Control | Playwright / CDP | by hand (the linkedin-reader repo owns this) |
 
 ```sh
 headed-chromium https://example.com                     # test browser
 BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 CDP_PORT=9223 headed-chromium
-./run login                                             # hand-login, over VNC
-./run login --verify                                    # still logged in?
+./run browser                                           # hand-drive the box's browser over VNC
+./run browser --stop                                    # stop it (SIGTERM, flushes cookies)
 ```
 
 - Playwright: `chromium.launch(headless=False, executable_path="/usr/bin/chromium")`,
@@ -214,27 +215,24 @@ BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 CDP_PORT=9223 headed-chromium
   beats invisibility. Reasoning:
   [`decisions/browser-and-social.md`](decisions/browser-and-social.md).
 
-### The one-time social login
+### Reaching the display by hand: `./run browser`
 
-`./run login [platform]` does the whole thing: starts `x11vnc` on the box
-(loopback only), launches `social-chromium` on `:99`, opens an SSH tunnel
-`localhost:5900 → box:5900`, and opens your local VNC client. You log in by hand,
-including 2FA; on exit the tunnel closes and `x11vnc` stops.
+`./run browser [url]` does the whole thing: starts `x11vnc` on the box (loopback
+only), launches the shared browser (`headed-chromium` by default) on `:99`, opens
+an SSH tunnel `localhost:5900 → box:5900`, and opens your local VNC client. You
+drive whatever is in the browser by hand, including a one-time login; on exit the
+tunnel closes and `x11vnc` stops.
 
 ```sh
-./run login                     # log in (needs a VNC client locally, e.g. tigervnc)
-./run login --verify            # cookie-jar evidence only, sends no traffic
-./run login --verify --deep     # ...plus ONE authenticated request
-./run login --stop              # SIGTERM the browser, so cookies flush
-VNC_LOCAL_PORT=5901 ./run login # if 5900 is taken
-SOCIAL_WINDOW_SIZE=1440,900 ./run login   # size it to your screen
+./run browser                       # needs a VNC client locally, e.g. tigervnc
+./run browser https://example.com   # open a specific page
+VNC_LOCAL_PORT=5901 ./run browser   # if 5900 is taken
+BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 ./run browser   # a different profile
+BROWSER_WINDOW_SIZE=1440,900 ./run browser   # size it to your screen
 ```
 
-Exit codes for `--verify`: `0` logged in, `1` not, `2` cannot tell — the last is a
-different problem from the second and should be looked at, not retried.
-
-Do **not** log in on your laptop and copy the cookie over; the reason is in the
-decisions doc, and it is not a style preference.
+`BROWSER_CMD` swaps the wrapper (e.g. `BROWSER_CMD=social-chromium`); whatever
+`social-chromium` runs against is owned by the linkedin-reader repo, not this one.
 
 ---
 

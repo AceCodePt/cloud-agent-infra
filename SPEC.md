@@ -15,26 +15,22 @@ The other places, so nothing is duplicated here:
 - **[`docs/measurements.md`](docs/measurements.md)** — the evidence the decisions
   rest on.
 
+The LinkedIn reader (a real account, the extension/controller, feed harvesting)
+is NOT a goal of this repo. It is the first app this infrastructure will host,
+and it lives in its own repo:
+[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader).
+
 ---
 
 ## Goals
-
-Numbered in the order they were first stated, which is NOT their priority. The
-priority column is what matters.
 
 | # | Goal | Priority | State |
 |---|---|---|---|
 | 4 | Agentic workflows for client companies: multiple agents, isolated per client, with agent-driven browser testing | **PRIMARY — the reason the machine exists** | Runner installed and measured; **isolation + concurrency decided (Unix user per client, 5–10 clients), no per-client accounts built yet** |
 | 1 | A reliable, reproducible cloud box reachable only over Tailscale, able to notify the phone | Substrate for the above | **Built and verified** |
-| 2 | Track posts in the LinkedIn feed and notify the phone | Secondary | Logged in, session verified; nothing reads the feed |
-| 3 | Extend to Facebook + Instagram: relevant comments, suggest replies | Secondary | Not started |
 
-Goals 2 and 3 are further along than the primary goal, which is an inversion
-worth naming: effort followed whatever was concrete and measurable (fingerprints
-have crisp right answers) rather than what mattered most. That is why this table
-has a priority column at all.
-
-Sizing is downstream of goal 4 and cannot be settled until goal 4 is defined.
+The box exists to run many agents, one Unix user per client. Everything else —
+browser testing, notifications, the apps that use them — is a consumer of that.
 
 ---
 
@@ -60,22 +56,13 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
 
 **On the box** (all from phase B, so all reproducible)
 
-- CLI: `git`, `stow`, `tmux`, `vim`, `python3-pip`, `build-essential`
+- CLI: `git`, `stow`, `tmux`, `neovim`, `python3-pip`, `build-essential`
 - Node.js 24 from the NodeSource apt repo
 - **opencode, pinned to `1.18.11`**, one root-owned binary in `/usr/local/bin`
 - Xvfb `:99` + Chromium, two wrappers: `headed-chromium` (CDP, for testing our
   own apps) and `social-chromium` (never CDP, for logged-in accounts)
 - `x11vnc`, installed but not enabled — started by hand for a one-time login
 - zram compressed swap
-
-**Goal 2, so far**
-
-- A LinkedIn account is logged in by hand on the box, into
-  `/mnt/data/browser/social-linkedin`
-- `./run login --verify` proves the session from the cookie jar with no traffic;
-  `--deep` proves it is live with one authenticated request
-- Two fingerprint defects found and fixed (timezone, WebGL) — see
-  `docs/measurements.md`
 
 ## What does not exist
 
@@ -84,35 +71,8 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
   per client, 5–10 clients — see `docs/decisions/agents-and-sizing.md`) but
   nothing is built. The runner binary being installed is not the same as goal 4
   being started.
-- **Nothing reads the feed.** No `extension/`, no `controller/`, no
-  `./run deploy`.
-- `/mnt/data` holds the browser profiles, Tailscale state, the phone notify key,
-  and the measurement corpora at `/mnt/data/repos/{ts,pyd}`. Nothing else.
-
----
-
-## Planned architecture for goal 2
-
-Not built. The reasoning is in
-[`docs/decisions/browser-and-social.md`](docs/decisions/browser-and-social.md);
-this is only the shape:
-
-```
-  controller (node, on the VM)
-    └─ WebSocket server on 127.0.0.1:8765
-         ▲                          │
-         │ harvested JSON           │ commands: scroll / harvest / stop
-         │                          ▼
-  ┌──────┴───────────────────────────────────┐
-  │ extension service worker  (holds the WS)  │
-  │        ▲ chrome.runtime messaging ▼       │
-  │ content script (isolated world, reads DOM)│
-  └───────────────────────────────────────────┘
-        real headful Chrome on Xvfb :99
-        LinkedIn tab — sees none of the above
-```
-
-No CDP anywhere in that chain, which is the entire point.
+- `/mnt/data` holds the browser profiles, Tailscale state, and the phone notify
+  key. Nothing else.
 
 ---
 
@@ -126,11 +86,7 @@ stays `e2-standard-2` on GCP. Still open: wiring the phone into an approval loop
 and re-measuring over a long real session. The `$154/yr` vs `$1,353/yr` question
 is answered: neither, at the current scale.
 
-**2. Does the social session survive a VM pause/unpause?** Untested, and it is a
-decision point rather than a detail: if it does not, goal 2's whole "log in once
-by hand" premise changes.
-
-**3. Client data residency.** Confirmed unrestricted today, so a German VPS is
+**2. Client data residency.** Confirmed unrestricted today, so a German VPS is
 allowed. Re-check if a client contract says otherwise — and note that at ~$19/mo
 per box, one-server-per-client becomes affordable isolation that GCP pricing
 forecloses.
@@ -142,27 +98,6 @@ parked migration decision in
 ---
 
 ## Risks
-
-**Goal 2 — LinkedIn**
-
-- **The feed requires authentication.** No official API exposes the member home
-  feed, and the User Agreement prohibits automated access. The realistic downside
-  is account restriction — losing the network and history — not litigation.
-- **Silent breakage is the likely failure mode**, not a dramatic ban: a layout
-  change that parses zero posts looks identical to a quiet feed. Zero parsed items
-  must alert.
-- **DOM scraping is fragile.** Generated class names churn and the feed is
-  virtualised. Reading response bodies would be sturdier but is not available in
-  MV3 without touching the page or using CDP.
-- **Service workers die unpredictably.** Keepalive prevents *idle* death only;
-  reconnect logic is mandatory.
-- Residual fingerprint differences are accepted knowingly: software renderer,
-  `hardwareConcurrency: 2`, no trusted input events from an extension.
-
-**Goal 3 — Meta**
-
-Facebook and Instagram are linked through Accounts Center, so enforcement can
-cascade across both, and Meta is more aggressive about automation than LinkedIn.
 
 **Goal 4 — capacity**
 

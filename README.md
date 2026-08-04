@@ -1,10 +1,11 @@
-# cloud-agent-infra
+# multi-agent-infra
 
-A cloud-hosted, always-on **Debian agent box**: a small Google Compute Engine VM
-running Debian 12, reached over Tailscale from your laptop or phone. Long-running
-agents (via tmux, or `opencode serve`) keep working while your local machine is
-asleep. Infrastructure is defined as code (Terraform), with a single source of
-truth for configuration shared between the bootstrap script and Terraform.
+A cloud-hosted, always-on **Debian agent box** that runs **multiple opencode
+sessions, one Unix user per client**: a small Google Compute Engine VM running
+Debian 12, reached over Tailscale from your laptop or phone. Long-running agents
+(via tmux, or `opencode serve`) keep working while your local machine is asleep.
+Infrastructure is defined as code (Terraform), with a single source of truth for
+configuration shared between the bootstrap script and Terraform.
 
 **This README is just the front door.** What to read depends on the question:
 
@@ -28,11 +29,11 @@ truth for configuration shared between the bootstrap script and Terraform.
 │   • Debian stable + apt; unattended security updates        │
 │   • tailscaled (systemd) -> joins tailnet as "cloud-agent"  │
 │   • Tailscale SSH: `ssh <user>@cloud-agent` lands here      │
-│   • opencode (pinned) + Node 24 — the agent runner          │
+│   • opencode (pinned) + Node 24 — the agent runner, one user per client
 │   • Xvfb :99 + two Chromium wrappers:                       │
 │       headed-chromium  CDP, for testing our own apps        │
 │       social-chromium  no CDP ever, for logged-in accounts  │
-│   • x11vnc, loopback only, started by hand for a login      │
+│   • x11vnc, loopback only, started by hand (`./run browser`)│
 │   • Persistent data disk mounted at /mnt/data               │
 │     (writable root — no COS quirks)                         │
 └─────────────────────────────────────────────────────────────┘
@@ -97,8 +98,7 @@ cloud-agent-infra/
 │   ├── provision-phone.sh# phone-side parser, boot survival, re-key to current VM key
 │   ├── verify.sh         # asserts the whole end state; non-zero exit on any drift
 │   ├── verify-browser.sh # browser-stack sidecar; verify.sh runs it concurrently
-│   ├── login-social.sh   # `./run login`: hand-login over VNC, and verify the session
-│   ├── social-session.py # reads the profile's cookie jar (and optionally probes it)
+│   ├── browser.sh        # `./run browser`: hand-drive the box's browser over VNC
 │   ├── measure-resources.py  # `./run measure`: PSS by user/kind, peaks, MemAvailable
 │   ├── lsp-probe.mjs     # `./run lsp-probe`: what one language server costs on a repo
 │   └── drive-agent*.mjs / agent-stress*.mjs / box-*.sh

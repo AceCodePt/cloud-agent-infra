@@ -135,11 +135,12 @@ UNIT
     echo 'export DISPLAY=:99' > /etc/profile.d/display.sh
 
     # A7c. x11vnc: the ONLY way to interact with the browser on :99 by hand —
-    # a social login (password/2FA) can't be automated without handing
+    # a one-time login (password/2FA) can't be automated without handing
     # credentials to a script. Loopback-bound (reach via `ssh -L 5900:...`),
     # -nopw safe only because of that bind; NOT enabled, started by hand and
-    # stopped after the login. Deliberately no window manager: the measured
-    # fingerprint-matching config needs xauth, not a WM.
+    # stopped after the login (`./run browser` drives the whole flow).
+    # Deliberately no window manager: the measured fingerprint-matching config
+    # needs xauth, not a WM.
     cat > /etc/systemd/system/x11vnc.service <<'UNIT'
 [Unit]
 Description=x11vnc on DISPLAY :99, loopback only (manual start, for hand-login)
@@ -184,12 +185,11 @@ CHROME
 
     # A7e. social-chromium: the browser for LOGGED-IN social accounts. Same
     # codebase as headed-chromium but deliberately different: NO CDP AT ALL
-    # (Runtime.enable is the clearest automation marker there is), control
-    # comes from our own extension over a WebSocket to the local controller.
-    # No fingerprint flags either — coherence beats invisibility. Reasoning in
-    # docs/decisions/browser-and-social.md. Extensions load from a directory
-    # deployed separately (scripts/deploy-app.sh); Terraform provisions the
-    # machine, not the app.
+    # (Runtime.enable is the clearest automation marker there is). No
+    # fingerprint flags either — coherence beats invisibility. This wrapper is
+    # infra; WHAT runs in it (the extension/controller for a real account) is
+    # owned by AceCodePt/linkedin-reader. Extensions load from a directory that
+    # repo deploys; Terraform provisions the machine, not the app.
     cat > /usr/local/bin/social-chromium <<'SOCIAL'
 #!/usr/bin/env bash
 # Real headful Chromium for authenticated social sessions.
@@ -324,7 +324,16 @@ $APT update
 
 # Wave 1: the CLI tools you want the moment you log in.
 echo ">> wave 1: CLI tools"
-$APT install -y git stow tmux vim python3-pip
+$APT install -y git stow tmux neovim python3-pip zsh
+
+# The dotfiles are zsh-centric, so the agent user's default shell is zsh.
+# phase A created exactly one interactive account (uid >= 1000); pick it
+# rather than hardcoding a username. Idempotent.
+AGENT_USER="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }')"
+if [ -n "$AGENT_USER" ] && command -v zsh >/dev/null 2>&1; then
+  chsh -s /usr/bin/zsh "$AGENT_USER"
+  echo ">> default shell for $AGENT_USER -> zsh"
+fi
 
 # Wave 2: the heavy stuff. chromium alone pulls ~200MB of codec libraries.
 echo ">> wave 2: upgrade + headed-browser stack"
