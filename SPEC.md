@@ -159,8 +159,12 @@ cascade across both, and Meta is more aggressive about automation than LinkedIn.
 
 **Goal 4 — capacity**
 
-The box saturates at roughly two actively-working agents on 2 vCPU. Any promise
-made to a client about concurrency is currently unbacked.
+The box saturates CPU at roughly two actively-working agents on 2 vCPU, but a
+concurrency ramp showed it **degrades gracefully, never halts**: 100% completion
+up to 24 concurrent sessions on one server, and 3 separate per-client servers
+(6/6 rounds) at 2952 MB peak PSS with ~4.6 GB free — see
+`docs/measurements.md`. Memory is not the binding constraint; CPU is, and slow
+is not halt.
 
 **Process**
 

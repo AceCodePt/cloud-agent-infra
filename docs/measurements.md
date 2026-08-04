@@ -140,6 +140,52 @@ accumulates context and touches more of the repo, so the LSP peak may grow.
 Re-measure with a real client workload and a longer run before committing to a
 concurrency number.
 
+## Does the box halt, or just slow down?
+
+The question that actually decides sizing. `agent-stress.mjs` drives K concurrent
+canaries — each a bounded "read `checker.ts`, list functions" task on its own
+session — while a sampler watches MemAvailable / swap / load; then dmesg is
+grepped for OOM and every process checked alive. A canary that completes proves
+the whole stack worked; a box that is merely slow completes, late.
+
+**One shared server, K concurrent sessions** (what one server absorbs):
+
+| K | completion | peak PSS | min MemAvailable | peak swap | max load |
+|---|---|---|---|---|---|
+| 2 | 4/4 (100%) | 1972 MB | 5546 MB | 35 MB | 3.28 |
+| 4 | 8/8 (100%) | 1980 MB | 5515 MB | 35 MB | 4.82 |
+| 6 | 12/12 (100%) | 2212 MB | 5283 MB | 35 MB | 7.02 |
+| 8 | 16/16 (100%) | 2020 MB | 2528 MB | 118 MB | 9.27 |
+| 12 | 24/24 (100%) | 2421 MB | 5101 MB | 99 MB | 7.16 |
+| 16 | 32/32 (100%) | 2371 MB | 5128 MB | 98 MB | 9.33 |
+| 24 | 48/48 (100%) | 2274 MB | 5265 MB | 121 MB | 10.95 |
+
+Not one OOM kill, not one dead process, not one failed round, all the way to 24
+concurrent agents on 2 vCPU. Memory stays nearly flat because every session on
+the same repo shares the same tsgo LSP client — the box just gets slower. The
+single K=8 dip (2528 MB) was a transient (several LSPs spawning at once), not a
+trend; K=12 and above returned to ~5100 MB free.
+
+**The realistic per-client case — one server each** (`box-multi-stress.sh`,
+matching the isolation design where every client is its own opencode + LSP):
+
+| K servers | completion | peak PSS | min MemAvailable | peak swap | max load |
+|---|---|---|---|---|---|
+| 3 | 6/6 (100%) | 2952 MB | 4594 MB | 120 MB | 8.14 |
+
+**Answer: the box does not halt, it degrades gracefully.** It ran out of CPU
+around K=4 (load above 2 vCPU) but kept completing at 100% up to K=24, with
+MemAvailable never below ~2.5 GB and swap never above ~120 MB (zram absorbs it).
+The failure mode is "work gets slower", never "work stops". The only real halt
+threat is OOM, and it was not approached at these sizes: ~1000 MB per working
+client against 8 GB leaves a wide margin, with zram as a further compressed
+buffer.
+
+What would change the answer: a much larger repo (LSP peak grows with indexing),
+multiple distinct repos (no shared LSP — the multi-server run showed the real
+per-client memory), or agents running long builds. The rule stands: re-run the
+ramp when a new client type arrives.
+
 ## Fingerprint
 
 CreepJS, measured: headful Chromium under Xvfb with `xauth` scores **0%/44%** —

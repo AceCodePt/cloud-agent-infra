@@ -54,7 +54,8 @@ Agents
                    drivers in scripts/ (drive-agent-loop.mjs, agent-stress.mjs,
                    box-*.sh) are hand-driven over ssh — deliberately not wired in
                    here, because each needs a running `opencode serve` with a
-                   provider connected. See docs/measurements.md.
+                   provider connected. See docs/measurements.md — the concurrency
+                   ramp (slow-but-alive, never halt) lives there.
 
 Social  (platform defaults to linkedin, the only one wired up)
   login [pf]       Log a social account in BY HAND, in the browser on the box,
