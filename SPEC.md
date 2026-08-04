@@ -3,9 +3,11 @@
 What this project is for, what actually exists today, and what is still
 undecided. Read it before picking the project back up.
 
-Three other places, so nothing is duplicated here:
+The other places, so nothing is duplicated here:
 
-- **`README.md`** — how to operate the machine that exists.
+- **`README.md`** — the front door; where to read depending on the question.
+- **[`docs/capabilities.md`](docs/capabilities.md)** — command ↔ script ↔ flow map.
+- **[`docs/operating.md`](docs/operating.md)** — how to operate the machine that exists.
 - **`TASK.md`** — work that is still open.
 - **[`docs/decisions/`](docs/decisions/)** — every settled question, with its
   reasoning and status. **Do not re-argue one of those from memory**; if a
@@ -114,10 +116,13 @@ No CDP anywhere in that chain, which is the entire point.
 
 ## Open questions
 
-**1. What is goal 4, concretely?** Concurrent agent count; whether isolation is a
-Unix user, a container or a whole box per client; whether browser testing means
-one browser or one per agent. Determines sizing, which determines whether the
-provider gap is $154/yr or $1,353/yr. All infrastructure work waits on this.
+**1. What is goal 4, concretely?** The concurrency half is now measured: the box
+degrades gracefully, never halts (100% completion to 24 concurrent agents; CPU
+saturates ~2–4 active). Still open: whether isolation is a Unix user, a
+container or a whole box per client, and whether browser testing means one
+browser or one per agent. Isolation determines sizing, which determines whether
+the provider gap is $154/yr or $1,353/yr. All infrastructure work waits on the
+isolation choice.
 
 **2. Does the social session survive a VM pause/unpause?** Untested, and it is a
 decision point rather than a detail: if it does not, goal 2's whole "log in once

@@ -3,8 +3,9 @@
 Every settled question lives here, with its reasoning and its status. Nothing
 else in the repo should re-argue one: `README.md` documents how to operate the
 machine, `SPEC.md` states the goals and the current state, `TASK.md` lists work
-that is still open, and `docs/measurements.md` holds the evidence these
-decisions were made from.
+that is still open, `docs/capabilities.md` maps command ↔ script ↔ flow,
+`docs/operating.md` is the operator's manual, and `docs/measurements.md` holds
+the evidence these decisions were made from.
 
 If a decision changes, edit it here and change its status. Do not leave two
 answers to the same question in two files — that is how this repo previously

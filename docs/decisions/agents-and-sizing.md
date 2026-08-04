@@ -88,6 +88,25 @@ Second-order consequence for goal 2: do not leave the social browser sitting on
 `/feed/` between reads. Park it on `about:blank`, or stop it and let
 `./run login --verify` read the cookie jar with no browser running at all.
 
+## Overload is graceful, not a halt — **Made**
+
+The natural question after the last section: if two active agents saturate the
+CPU, what happens with ten? A concurrency ramp (`agent-stress.mjs` +
+`box-agent-stress.sh`) answered it empirically: K canaries × R rounds against a
+running server, with a sampler watching MemAvailable/swap/load and dmesg grepped
+for OOM. **Completion stayed 100% all the way to K=24** — no OOM kill, no dead
+process, no failed round — while load climbed to ~11 and MemAvailable never fell
+below ~2.5 GB (swap ≤121 MB, absorbed by zram).
+
+The failure mode is "work gets slower", never "work stops". Slow is acceptable
+by the operator's own rule, so this removes the only hard capacity objection to
+running several clients on one box. The honest per-client number for the real
+isolation design (one server each, no shared LSP) is higher — 3 servers measured
+at ~2952 MB peak with ~4.6 GB free — still comfortably inside 8 GB. What would
+change the answer: a much larger repo, several distinct repos (no shared LSP),
+or agents running long builds. Re-run the ramp when a new client type arrives.
+Full tables: [`../measurements.md`](../measurements.md).
+
 ## Language server chosen per client repo; tsgo for large TypeScript — **Made**
 
 The LSP, not opencode, is the dominant per-client cost, and opencode's default

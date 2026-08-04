@@ -16,8 +16,11 @@ Everything about sizing, isolation and the provider is blocked on this. The
 output of the first two items is a decision document, not code.
 
 - [ ] Write down the concurrency target: how many clients, how many
-      *simultaneously active* agents. Measured ceiling today is ~2 active agents
-      on 2 vCPU.
+      *simultaneously active* agents. Measured: the CPU saturates around ~2–4
+      active agents on 2 vCPU, but the box **degrades gracefully and never
+      halts** — 100% completion up to 24 concurrent sessions (see
+      `docs/measurements.md`). So the target should be set on acceptable
+      latency, not on a hard ceiling.
 - [ ] Decide the isolation model — Unix user per client, container per client, or
       box per client — and record it in `docs/decisions/agents-and-sizing.md`.
 - [ ] Decide whether agent browser testing means one shared browser or one per
@@ -80,6 +83,9 @@ disk. No LinkedIn yet.
 - [ ] `python3-websocket`, `x11-utils` and `xdotool` were installed by hand during
       measurement and are in no committed script and no phase B wave. Either drop
       them or add them to `startup.tf`, so a rebuilt box matches this one.
-- [ ] `scripts/agent-stress.mjs`, `box-agent-stress.sh` and
-      `box-agent-supervisor.sh` are uncommitted and hand-driven over SSH. Commit
-      them with the concurrency numbers they produce, or delete them.
+- [x] The measurement toolchain (`agent-stress.mjs`, `box-*-stress.sh`,
+      `box-agent-supervisor.sh`, `drive-agent*.mjs`, `box-setup-agent.sh`,
+      `box-run-agent.sh`) is committed and documented in
+      `docs/capabilities.md` (section 3) — no longer hand-rolled in `/tmp`.
+      Note: they stay **hand-driven over ssh**, not wired into `./run`, because
+      each needs a running `opencode serve` with a provider connected.
