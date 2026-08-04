@@ -203,15 +203,38 @@ UNIT
     # A7b. Every login shell (and tmux) gets the display by default.
     echo 'export DISPLAY=:99' > /etc/profile.d/display.sh
 
-    # A7c. NOTE: /etc/default/zramswap is deliberately NOT written here.
-    # It is a dpkg CONFFILE shipped by zram-tools, and zram-tools is installed in
-    # phase B. Creating it first makes dpkg detect a conflict ("File on system
-    # created by you or by a script / File also in package") and prompt on stdin;
-    # phase B has no stdin, so dpkg dies with "end of file on stdin at conffile
-    # prompt", the whole apt run exits 100, and the browser stack never installs.
-    # DEBIAN_FRONTEND=noninteractive does NOT prevent this — it governs debconf,
-    # not dpkg conffile prompts. Phase B writes the file after the install and
-    # also passes --force-confold as a general guard.
+    # A7c. x11vnc: the ONLY way to interact with the browser on :99 by hand.
+    # Needed because a social account has to be logged in manually once —
+    # password, 2FA, and possibly a device confirmation — and that cannot be
+    # automated without handing credentials to a script.
+    #
+    # Bound to 127.0.0.1 so it adds no listening surface: reach it with
+    #   ssh -L 5900:127.0.0.1:5900 <box>
+    # and point a VNC client at localhost:5900. NOT enabled — it is started by
+    # hand for a login and stopped afterwards.
+    #
+    # -nopw is safe ONLY because of the loopback bind: nothing off-box can
+    # reach the port, and the SSH tunnel is already authenticated.
+    #
+    # Deliberately NO window manager. The measured Xvfb configuration that
+    # matches real headed Chrome needs xauth, not a WM, and there is no evidence
+    # any bot detection checks for one — LinkedIn's fingerprint feature list does
+    # not include document.hasFocus(). Adding openbox would be cargo cult.
+    cat > /etc/systemd/system/x11vnc.service <<'UNIT'
+[Unit]
+Description=x11vnc on DISPLAY :99, loopback only (manual start, for hand-login)
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/x11vnc -display :99 -localhost -nopw -forever -shared -noxdamage
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
 
     # A7d. headed-chromium: a real browser on :99 with CDP + persistent profile.
     cat > /usr/local/bin/headed-chromium <<'CHROME'
@@ -230,10 +253,55 @@ exec chromium --no-first-run --no-default-browser-check \
 CHROME
     chmod +x /usr/local/bin/headed-chromium
 
-    # A7e. Agent-writable profile root on the data disk (/mnt/data is
+    # A7e. social-chromium: the browser for LOGGED-IN social accounts.
+    #
+    # Deliberately different from headed-chromium above, and the difference is
+    # the whole point:
+    #
+    #   headed-chromium  agent browser testing against OUR apps. CDP is fine
+    #                    there: nothing is trying to detect us.
+    #   social-chromium  a real account is logged in. NO CDP AT ALL — calling
+    #                    Runtime.enable is the clearest automation marker there
+    #                    is, and it is what brotector and friends look for.
+    #                    Control comes from our own extension over a WebSocket
+    #                    to the local controller instead.
+    #
+    # Also note what is NOT here: no --disable-blink-features, no --user-agent,
+    # no fingerprint flags. Coherence beats invisibility — a browser answering
+    # client hints with blanks is rarer than one admitting it is automated. The
+    # only safe setup is a normal browser being normal.
+    #
+    # Extensions are loaded from a directory deployed separately (see
+    # scripts/deploy-app.sh); Terraform provisions the machine, not the app.
+    cat > /usr/local/bin/social-chromium <<'SOCIAL'
+#!/usr/bin/env bash
+# Real headful Chromium for authenticated social sessions.
+#   DISPLAY            default :99
+#   SOCIAL_PROFILE_DIR default /mnt/data/browser/social  (persist: cookies
+#                      harvested from a normal profile last weeks, from a
+#                      fresh/incognito context about an hour)
+#   EXT_DIR            default /mnt/data/app/extension   (our private, unlisted
+#                      extension; its ID is not in LinkedIn's scan list)
+set -euo pipefail
+export DISPLAY="$${DISPLAY:-:99}"
+PROFILE="$${SOCIAL_PROFILE_DIR:-/mnt/data/browser/social}"
+EXT="$${EXT_DIR:-/mnt/data/app/extension}"
+ARGS=(--no-first-run --no-default-browser-check --user-data-dir="$PROFILE")
+if [ -f "$EXT/manifest.json" ]; then
+  ARGS+=(--disable-extensions-except="$EXT" --load-extension="$EXT")
+else
+  echo "social-chromium: no extension at $EXT (run: ./run deploy)" >&2
+fi
+exec chromium "$${ARGS[@]}" "$@"
+SOCIAL
+    chmod +x /usr/local/bin/social-chromium
+
+    # A7f. Agent-writable profile root on the data disk (/mnt/data is
     # root-owned; agents run as your user and create their own subdirs).
-    mkdir -p "$DATA_MNT/browser"
-    chown "$USER_NAME:$USER_NAME" "$DATA_MNT/browser"
+    # app/ holds deployed extension + controller code; social/ the logged-in
+    # profile, which must survive pause/unpause and rebuilds.
+    mkdir -p "$DATA_MNT/browser/social" "$DATA_MNT/app"
+    chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
 
     # --- A8. Phone notifications (Termux) ---------------------------------
     # The VM is the SSH *client* here — it dials out to Termux's own sshd on
@@ -324,19 +392,58 @@ echo ">> wave 1: CLI tools"
 $APT install -y git stow tmux vim python3-pip
 
 # Wave 2: the heavy stuff. chromium alone pulls ~200MB of codec libraries.
+#
+# xauth is not optional garnish: the one MEASURED configuration that scores
+# identically to a real headed Chrome on a desktop (CreepJS 0%/44%, vs 67%/50%
+# for headless) is "headed under Xvfb, with xauth present". A window manager is
+# NOT part of that configuration — see the note in phase A7c.
+#
 echo ">> wave 2: upgrade + headed-browser stack"
 $APT upgrade -y
-$APT install -y build-essential xvfb chromium \
-  fonts-liberation fonts-noto-core zram-tools
+$APT install -y build-essential xvfb xauth chromium \
+  fonts-liberation fonts-noto-core zram-tools \
+  x11vnc python3-venv
 
-# zram compressed swap (~+50% effective RAM headroom for browsers). Written
-# AFTER the install, for the conffile reason documented in phase A7c. apt
-# auto-starts zramswap with a fallback size at install time, so a restart (not
-# enable --now) is what deterministically applies our sizing.
+# Wave 2b: Node.js LTS from the vendor apt repo.
+#
+# Why the vendor repo and not Debian's: bookworm ships nodejs 18, which went
+# end-of-life in April 2025. This follows the same reasoning (and the same
+# pattern) as installing Tailscale from its vendor repo in phase A — an apt
+# source, so it keeps receiving security updates, rather than a
+# curl-pipe-to-shell binary drop that apt knows nothing about.
+#
+# Node rather than Python for the controller because the extension is already
+# JavaScript: one language across the service worker, the content script and the
+# WebSocket server, and no build step or bundler to keep the three in sync.
+echo ">> wave 2b: node.js LTS"
+if ! command -v node >/dev/null 2>&1; then
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key |
+    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  chmod 0644 /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
+    > /etc/apt/sources.list.d/nodesource.list
+  $APT update
+fi
+$APT install -y nodejs
+echo ">> node $(node --version), npm $(npm --version)"
+
+# zram compressed swap. Written AFTER the install, for the conffile reason in
+# phase A7c. apt auto-starts zramswap with a fallback size at install time, so a
+# restart (not enable --now) is what deterministically applies our sizing.
+#
+# Measured on an 8GB box: /dev/zram0 at 3.9G zstd, and 0B in use — a 530MB
+# browser never reaches for it. So this earns nothing TODAY; it is kept for the
+# multi-agent workload, where several browsers and toolchains at once is exactly
+# the case swap headroom is for. Do not read the earlier "zram is inert" note as
+# evidence it was absent: that came from a probe that lost swapon to a
+# non-interactive PATH (see the same trap in verify-browser.sh).
 echo ">> configuring zram swap"
 printf 'ALGO=zstd\nPERCENT=50\n' > /etc/default/zramswap
 
 # Now that the packages exist, start the units whose files phase A wrote.
+# x11vnc is deliberately NOT enabled: it exists for the one-time interactive
+# login, is bound to loopback, and is started by hand when needed.
 echo ">> enabling xvfb + zram"
 systemctl daemon-reload
 systemctl enable --now xvfb
@@ -370,8 +477,15 @@ UNIT
 
     systemctl daemon-reload
     systemctl enable agent-packages.service
+    # `restart`, NOT `start`. The unit is a oneshot with RemainAfterExit=yes, so
+    # after a successful install it stays "active (exited)" — and `systemctl
+    # start` on an already-active unit is a NO-OP. That silently breaks the
+    # self-healing this file claims: re-running the startup script (./run rekey,
+    # ./run up, or editing the package list and re-applying) would never
+    # reinstall anything. `restart` re-runs unconditionally, and on a real boot
+    # the unit is inactive, so the two are equivalent there.
     # --no-block: do not wait. This is the whole point of the split.
-    systemctl start --no-block agent-packages.service
+    systemctl restart --no-block agent-packages.service
 
     echo ">> phase B (packages + browser stack) is installing in the background."
     echo ">>   progress:  journalctl -u agent-packages -f"
