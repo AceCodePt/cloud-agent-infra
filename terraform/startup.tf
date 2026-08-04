@@ -229,6 +229,12 @@ Requires=xvfb.service
 [Service]
 Environment=DISPLAY=:99
 ExecStart=/usr/bin/x11vnc -display :99 -localhost -nopw -forever -shared -noxdamage
+# x11vnc traps SIGTERM and exits 2, so a perfectly normal `systemctl stop` is
+# reported as "Failed with result 'exit-code'" and the unit stays in the failed
+# state forever — showing up in `systemctl --failed` and looking like a real
+# problem on a box where the correct state is "stopped, because the login is
+# finished". Measured: "caught signal: 15" then status=2/INVALIDARGUMENT.
+SuccessExitStatus=2
 Restart=on-failure
 RestartSec=2
 

@@ -39,6 +39,12 @@ Lifecycle
                    Destroys the data disk. Use `up` unless you mean that.
   cleanup [flags]  Tear down + delete the tailnet node (--yes, --keep-bucket, --keep-files, --force)
 
+Social
+  login [--stop]   Log a social account in BY HAND, in the browser on the box,
+                   over VNC through an SSH tunnel. Do this once; the profile on
+                   the data disk then keeps the session for weeks. Never copy a
+                   cookie from your laptop instead -- see the script's header.
+
 Tailscale
   mint-key         Mint a fresh one-off auth key into terraform/tailscale.auto.tfvars
   check-key        Assert that key is still usable (apply does this for you)
@@ -108,6 +114,9 @@ rebuild)
   done
   printf '\n\033[1;32mRebuild complete and verified.\033[0m\n'
   ;;
+
+# --- Social ------------------------------------------------------------
+login) scripts/login-social.sh "$@" ;;
 
 # --- Tailscale ---------------------------------------------------------
 mint-key) scripts/tailscale-api.sh mint ;;
