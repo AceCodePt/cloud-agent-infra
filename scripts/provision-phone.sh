@@ -58,7 +58,8 @@ VMKEY="$(
 if [[ -z "$VMKEY" ]]; then
   # No key in the serial log: normal when the data disk (and its keypair)
   # survived the rebuild, since the script only echoes on generation.
-  note "not in the serial log (disk likely persisted); reading it from the VM"  VMKEY="$(
+  note "not in the serial log (disk likely persisted); reading it from the VM"
+  VMKEY="$(
     ssh_vm 'cat /mnt/data/ssh-termux/id_ed25519.pub' 2>/dev/null |
       grep -E '^ssh-ed25519 ' || true
   )"
@@ -71,7 +72,8 @@ fi
 
 # Validate with the real parser, not a regex guess: this is what stops an empty
 # or truncated value from being appended as a malformed line.
-printf '%s\n' "$VMKEY" >"$TMP/vm.pub"ssh-keygen -lf "$TMP/vm.pub" >/dev/null 2>&1 ||
+printf '%s\n' "$VMKEY" >"$TMP/vm.pub"
+ssh-keygen -lf "$TMP/vm.pub" >/dev/null 2>&1 ||
   die "refusing to install an unparsable pubkey: '$VMKEY'"
 VM_FPR="$(ssh-keygen -lf "$TMP/vm.pub" | awk '{print $2}')"
 note "VM notify key: $VM_FPR"

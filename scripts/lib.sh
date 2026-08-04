@@ -104,7 +104,8 @@ rerun_startup_script() {
 
   note "re-running the startup script over IAP (no reboot)"
   # NOT ssh_vm: that goes over the tailnet, which is the thing being repaired.
-  gcloud compute ssh "$INSTANCE" \    --zone "$ZONE" --project "$PROJECT_ID" --tunnel-through-iap \
+  gcloud compute ssh "$INSTANCE" \
+    --zone "$ZONE" --project "$PROJECT_ID" --tunnel-through-iap \
     --command 'sudo google_metadata_script_runner startup'
 }
 
