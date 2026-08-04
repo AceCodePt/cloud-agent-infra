@@ -50,8 +50,9 @@ resource "google_compute_instance" "agent" {
     # and that premise does not survive contact with how people actually use
     # these services. Phones roam between home wifi, mobile data and café APs all
     # day; if a changed IP were weighted heavily, the mobile apps would be
-    # unusable. The claim also had thin evidence behind it (see SPEC.md) — it
-    # came mostly from proxy vendors, who sell the fix.
+    # unusable. The claim also had thin evidence behind it (see
+    # docs/decisions/infrastructure.md) — it came mostly from proxy vendors, who
+    # sell the fix.
     access_config {}
   }
 

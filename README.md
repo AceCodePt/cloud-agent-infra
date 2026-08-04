@@ -2,10 +2,21 @@
 
 A cloud-hosted, always-on **Debian agent box**: a small Google Compute
 Engine VM running Debian 12, reached over Tailscale from your laptop or phone.
-Long-running agents (via tmux) keep working while your local machine is asleep.
+Long-running agents (via tmux, or `opencode serve`) keep working while your local
+machine is asleep.
 
 Infrastructure is defined as code (Terraform), with a single source of truth
 for configuration shared between the bootstrap script and Terraform.
+
+**This file is the operator's manual — what the machine is and how to drive it.**
+The rest of the documentation is deliberately elsewhere, one answer per question:
+
+| Question | Where |
+|---|---|
+| What is this for, what exists, what is undecided | `SPEC.md` |
+| What is still to be done | `TASK.md` |
+| **Why** something is the way it is | [`docs/decisions/`](docs/decisions/) |
+| The numbers behind those decisions | [`docs/measurements.md`](docs/measurements.md) |
 
 ---
 
@@ -18,7 +29,11 @@ for configuration shared between the bootstrap script and Terraform.
 │   • Debian stable + apt; unattended security updates        │
 │   • tailscaled (systemd) -> joins tailnet as "cloud-agent"  │
 │   • Tailscale SSH: `ssh <user>@cloud-agent` lands here      │
-│   • Xvfb :99 + headed Chromium (agents' real browser)       │
+│   • opencode (pinned) + Node 24 — the agent runner          │
+│   • Xvfb :99 + two Chromium wrappers:                       │
+│       headed-chromium  CDP, for testing our own apps        │
+│       social-chromium  no CDP ever, for logged-in accounts  │
+│   • x11vnc, loopback only, started by hand for a login      │
 │   • Persistent data disk mounted at /mnt/data               │
 │     (writable root — no COS quirks)                         │
 └─────────────────────────────────────────────────────────────┘
@@ -34,7 +49,9 @@ for configuration shared between the bootstrap script and Terraform.
 
 ```
 cloud-agent-infra/
-├── README.md
+├── README.md             # this file: the machine, and how to operate it
+├── SPEC.md               # goals, what exists, open questions
+├── TASK.md               # open work
 ├── run                   # operational entry point — `./run`, `./run rebuild`
 │
 ├── config.env            # SINGLE SOURCE OF TRUTH (git-ignored; holds secrets)
@@ -62,10 +79,16 @@ cloud-agent-infra/
 │   ├── wait-ready.sh     # block until the VM is on the tailnet and provisioned
 │   ├── provision-phone.sh# phone-side parser, boot survival, re-key to current VM key
 │   ├── verify.sh         # asserts the whole end state; non-zero exit on any drift
-│   └── verify-browser.sh # browser-stack sidecar; verify.sh runs it concurrently
+│   ├── verify-browser.sh # browser-stack sidecar; verify.sh runs it concurrently
+│   ├── login-social.sh   # `./run login`: hand-login over VNC, and verify the session
+│   ├── social-session.py # reads the profile's cookie jar (and optionally probes it)
+│   ├── measure-resources.py  # `./run measure`: PSS by user/kind, peaks, MemAvailable
+│   ├── lsp-probe.mjs     # `./run lsp-probe`: what one language server costs on a repo
+│   └── drive-agent*.mjs  # hand-driven: real opencode sessions to measure against
 │
 └── docs/
-    └── logs/             # decision logs (container→native, arch→debian, key decisions)
+    ├── decisions/        # every settled question + status (see decisions/README.md)
+    └── measurements.md   # the evidence those decisions rest on
 ```
 
 Every script resolves the repo root from its own path and `cd`s there, so they can
@@ -80,8 +103,9 @@ never run by `cd`-ing — `scripts/lib.sh` wraps it as
 
 - A Google Cloud project with **billing enabled**.
 - `gcloud` and `terraform` installed locally. (No `direnv` — see below.)
-- A [Tailscale](https://tailscale.com) account and an **auth key** (admin
-  console → Settings → Keys; reusable recommended so rebuilds can re-auth).
+- A [Tailscale](https://tailscale.com) account and a tailnet **API key** (admin
+  console → Settings → Keys). The tooling mints its own single-use auth key per
+  build from that; you do not manage auth keys by hand.
 - Application-default credentials for Terraform:
   ```sh
   gcloud auth application-default login
@@ -108,12 +132,20 @@ TF_VAR_machine_type="e2-standard-2"  # 2 full vCPU/8GB for agents+browsers; e2-m
 TF_VAR_instance_name="cloud-agent"   # also the tailnet hostname
 TF_VAR_ssh_user="youruser"           # your Unix user on the box
 TF_VAR_data_disk_size_gb="20"        # persistent disk for repos + tailscale state (optional, defaults to 20)
-TF_VAR_tailscale_auth_key="tskey-auth-..."
 TF_VAR_termux_host="galaxy-s24-ultra" # phone's Tailscale MagicDNS name, for notify-phone (optional)
 TF_VAR_termux_ssh_user="u0_a221"      # `whoami` inside Termux, required for notify-phone to work
+
+# Tailnet admin key. bootstrap.sh mints a single-use auth key per build from it,
+# and cleanup.sh deletes the stale node. See example.config.env for the details.
+TAILSCALE_API_KEY="tskey-api-..."
 ```
 
 `TF_VAR_data_disk_size_gb` is optional — omit it to use the default (20 GB).
+
+> Do **not** also set `TF_VAR_tailscale_auth_key`. Terraform ranks
+> `terraform/tailscale.auto.tfvars` (written by `mint`) above `TF_VAR_*` env vars,
+> so a key here is ignored on every normal build and then silently takes effect —
+> as a long-spent key — if that file ever goes missing. Set one or the other.
 
 > `TF_VAR_ssh_public_key` is **optional** and usually unnecessary — it
 > authorizes your own key for sshd, but `gcloud compute ssh
@@ -130,15 +162,11 @@ in a completely bare shell:
 env -i HOME="$HOME" PATH="$PATH" ./run plan   # No changes.
 ```
 
-> **Why no direnv?** An `.envrc` with `dotenv config.env` used to live here, and
-> it actively caused a bug: it exported `TF_VAR_*` into the interactive shell, so
-> a `load_config` that silently *failed* to export still appeared to work. Every
-> `terraform` run passed locally while `./scripts/cleanup.sh` would have died on
-> "No value for required variable" in any other shell. It was also a second,
-> subtly different definition of config loading, and it exported the
-> tailnet-admin `TAILSCALE_API_KEY` into *every* process started from this
-> directory — agents included. Config loading now has exactly one definition, and
-> the secret is only in the environment of the scripts that need it.
+> **Why no direnv?** An `.envrc` with `dotenv config.env` used to live here and
+> actively caused a bug, and it leaked the tailnet-admin `TAILSCALE_API_KEY` into
+> every process started from this directory — agents included. Config loading now
+> has exactly one definition. Full reasoning:
+> [`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md).
 
 ---
 
@@ -223,10 +251,12 @@ except the API key itself.
 mount the data disk, install Tailscale, create your user, `tailscale up`. The
 single-use auth key is spent at the end of phase A.
 
-**Phase B (background, ~4 min)** is everything else — `apt upgrade`, the CLI
-tools, and the headed-browser stack (chromium + fonts + Xvfb + zram). It runs as
-`agent-packages.service`, launched with `systemctl start --no-block`, so the
-metadata script runner returns immediately.
+**Phase B (background, ~4 min)** is everything else, in waves: the CLI tools
+(`git`, `stow`, `tmux`, `vim`), `apt upgrade`, the headed-browser stack (chromium,
+fonts, Xvfb, xauth, x11vnc, `libgl1-mesa-dri`, zram), Node.js 24 from the vendor
+apt repo, and **opencode at a pinned version** as a single root-owned binary in
+`/usr/local/bin`. It runs as `agent-packages.service`, launched with
+`systemctl restart --no-block`, so the metadata script runner returns immediately.
 
 This ordering was measured, not guessed:
 
@@ -372,9 +402,10 @@ To watch it happen step by step instead, the pieces are still there:
 
 ### 2. Connect
 
-Give the startup script a few minutes on first boot — it installs packages
-(Chromium + fonts are the bulk) and brings Tailscale up. Watch progress with
-`tail -f /var/log/startup-agent.log` via IAP if you're impatient. Then from
+The box is reachable ~84s after the instance is created — phase A brings
+Tailscale up and stops there. The rest (packages, browser stack, Node, opencode)
+installs in the background for another ~4 min; `./run wait --packages` blocks for
+it, and `tail -f /var/log/startup-agent.log` over IAP shows phase A. Then from
 your laptop:
 
 ```sh
@@ -401,31 +432,62 @@ Put anything you want to persist across VM rebuilds under `/mnt/data`.
 
 ---
 
-## Agent browsing (headed Chromium, not headless)
+## Browsers: two of them, and the difference matters
 
-Agents get a **real browser** — many sites block or flag `HeadlessChrome`, so
-the box runs Chromium *headed* on a virtual display. No desktop or window
-manager: **Xvfb** provides a 1920×1080 screen (`DISPLAY :99`) and Chromium
-renders into it exactly like a normal browser.
+Agents get a **real browser** — many sites block or flag `HeadlessChrome`, so the
+box runs Chromium *headed* on a virtual display. No desktop or window manager:
+**Xvfb** provides a 1920×1080 screen (`DISPLAY :99`) and Chromium renders into it
+exactly like a normal browser. `DISPLAY=:99` is pre-set in every login shell and
+tmux (via `/etc/profile.d`).
 
-- `DISPLAY=:99` is pre-set in every login shell and tmux (via `/etc/profile.d`).
-- Launch one with **`headed-chromium`** — a wrapper that provides a persistent
-  profile (`/mnt/data/browser/default`) and CDP at `http://localhost:9222`.
+There are two wrappers, and using the wrong one is the one mistake here with a
+lasting cost:
+
+| | `headed-chromium` | `social-chromium` |
+|---|---|---|
+| For | testing **our own** apps | a **real account** that is logged in |
+| CDP | yes, `CDP_PORT` (default 9222) | **never** — refuses, exit 64 |
+| Profile | `/mnt/data/browser/default` | `/mnt/data/browser/social-<platform>` |
+| Control | Playwright / CDP | by hand today; an extension over a local WebSocket once built (`SPEC.md`) |
+
+```sh
+headed-chromium https://example.com                     # test browser
+BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 CDP_PORT=9223 headed-chromium
+./run login                                             # hand-login, over VNC
+./run login --verify                                    # still logged in?
+```
+
 - Playwright: `chromium.launch(headless=False, executable_path="/usr/bin/chromium")`,
-  or attach to a running instance: `chromium.connect_over_cdp("http://localhost:9222")`.
-- **Multiple agents:** give each its own browser —
-  `BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 CDP_PORT=9223 headed-chromium`.
+  or attach: `chromium.connect_over_cdp("http://localhost:9222")`.
 - Logged-in sessions survive rebuilds (profiles live on the data disk).
+- Each headed Chromium costs ~530 MB (measured); a browser sitting on a busy
+  feed also costs about a full core, so park it on `about:blank` or stop it.
+- `social-chromium` deliberately has no fingerprint-spoofing flags. Coherence
+  beats invisibility, and datacenter-IP scoring is not something a flag fixes —
+  the reasoning, and why there is no proxy,
+  is in [`docs/decisions/browser-and-social.md`](docs/decisions/browser-and-social.md).
 
-Two honest caveats:
+### The one-time social login
 
-- The wrapper sets `--disable-blink-features=AutomationControlled` so
-  `navigator.webdriver` stays false, and a headed browser passes the
-  headless-specific checks. That does **not** make the traffic look
-  residential: bot protection scores GCP datacenter IPs low no matter what.
-  For heavily-protected targets you'd route via a residential proxy.
-- Each headed Chromium costs a few hundred MB of RAM — run what you need.
-  zram (compressed swap) is enabled to stretch headroom.
+`./run login [platform]` does the whole thing: starts `x11vnc` on the box
+(loopback only), launches `social-chromium` on `:99`, opens an SSH tunnel
+`localhost:5900 → box:5900`, and opens your local VNC client. You log in by hand,
+including 2FA; on exit the tunnel closes and `x11vnc` stops.
+
+```sh
+./run login                     # log in (needs a VNC client locally, e.g. tigervnc)
+./run login --verify            # cookie-jar evidence only, sends no traffic
+./run login --verify --deep     # ...plus ONE authenticated request
+./run login --stop              # SIGTERM the browser, so cookies flush
+VNC_LOCAL_PORT=5901 ./run login # if 5900 is taken
+SOCIAL_WINDOW_SIZE=1440,900 ./run login   # size it to your screen
+```
+
+Exit codes for `--verify`: `0` logged in, `1` not, `2` cannot tell — the last one
+is a different problem from the second and should be looked at, not retried.
+
+Do **not** log in on your laptop and copy the cookie over; the reason is in the
+decisions doc, and it is not a style preference.
 
 ---
 
@@ -744,10 +806,21 @@ gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp default
 
 ---
 
-## Possible next steps
+## Measuring the box
 
-- Bake dotfiles + package-list install into the startup script once stable,
-  so a rebuild is fully hands-off.
-- Snapshot the data disk on a schedule for backups.
-- Pin `debian-12` to a specific dated image if you want bit-reproducible
-  rebuilds (the family always tracks Google's latest).
+Sizing decisions in this repo come from measurement, not opinion, and the tools
+are checked in so a claim can be re-checked:
+
+```sh
+./run measure --seconds 120 --label "two agents"   # PSS by user and kind, peaks
+./run lsp-probe --cmd "tsgo --lsp --stdio" --root /mnt/data/repos/ts --quiet 30
+```
+
+`measure` reports **PSS**, not RSS, because per-client isolation means several
+copies of the same binaries sharing pages, and RSS overestimates in the direction
+that costs money. Results and their caveats:
+[`docs/measurements.md`](docs/measurements.md).
+
+Open ideas, not yet decided: bake dotfiles into the startup script, snapshot the
+data disk on a schedule, pin `debian-12` to a dated image for bit-reproducible
+rebuilds (the family tracks Google's latest).

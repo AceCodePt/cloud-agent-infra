@@ -1,194 +1,85 @@
 # TASK
 
-Actionable work only. Rationale, measurements and evidence live in `SPEC.md`.
+Open, actionable work only. Nothing here explains *why* — reasoning lives in
+[`docs/decisions/`](docs/decisions/), evidence in
+[`docs/measurements.md`](docs/measurements.md), state of the world in `SPEC.md`.
+
+**Ordering rule:** the priority column in `SPEC.md` decides what gets worked on,
+not whichever question is most tractable. Goal 4 is primary and has the least
+built.
 
 ---
 
-## Architecture (current)
+## Goal 4 (primary) — specify it before building anything
 
-A **private, unlisted Chrome extension** reads LinkedIn; a local controller
-drives it over a **WebSocket**. No CDP anywhere.
+Everything about sizing, isolation and the provider is blocked on this. The
+output of the first two items is a decision document, not code.
 
-```
-  controller (python, on the VM)
-    └─ WebSocket server on 127.0.0.1:8765
-         ▲                          │
-         │ harvested JSON           │ commands: scroll / harvest / stop
-         │                          ▼
-  ┌──────┴───────────────────────────────────┐
-  │ extension service worker  (holds the WS)  │
-  │        ▲ chrome.runtime messaging ▼       │
-  │ content script (isolated world, reads DOM)│
-  └───────────────────────────────────────────┘
-        real headful Chrome on Xvfb :99
-        LinkedIn tab — sees none of the above
-```
-
-Why this shape, in one line each (evidence in `SPEC.md`):
-
-- **No CDP** — `Runtime.enable` is the single clearest automation marker, and an
-  extension needs no debugging port at all.
-- **Private extension ID** — never published, so it is not in LinkedIn's
-  extension-ID scan list (38 IDs in 2017 → 6,167 by Feb 2026).
-- **No `web_accessible_resources`** — Chrome then *blocks* `chrome-extension://`
-  probes outright, so the ID cannot be confirmed even if guessed. Content
-  scripts do not need the declaration.
-- **No DOM modification** — nothing for LinkedIn's DOM-walking scan to find;
-  content scripts run in an isolated world invisible to page JS.
-- **Headful on Xvfb** — measures identically to real headed Chrome (CreepJS
-  0%/44%); headless scores 67%/50%.
-- **Extension can only be a WS client**, never a server — so the controller
-  listens and the browser dials out. Nothing can reach into the extension.
+- [ ] Write down the concurrency target: how many clients, how many
+      *simultaneously active* agents. Measured ceiling today is ~2 active agents
+      on 2 vCPU.
+- [ ] Decide the isolation model — Unix user per client, container per client, or
+      box per client — and record it in `docs/decisions/agents-and-sizing.md`.
+- [ ] Decide whether agent browser testing means one shared browser or one per
+      agent (each headed Chromium is ~530 MB and a browser on a busy page is
+      ~1 core).
+- [ ] Only then: resize, or migrate provider, or neither.
+- [ ] Wire the phone into an approval loop: `GET /event` (SSE) → `notify-phone`
+      with action buttons → `POST /session/:id/permissions/:permissionID`.
+- [ ] Re-measure with a real client workload over a long session; the current
+      numbers are minutes-long bursts.
 
 ---
 
-## Now — make the machine ready
+## Goal 2 — the LinkedIn reader
 
-- [x] **Phase B packages** — added `x11vnc`, `xauth`, `python3-venv`; kept
-      `zram-tools` (it was active all along; the removal rested on a bad probe)
-- [x] **Node.js 24 LTS** from the NodeSource apt repo — Debian ships 18, which is
-      EOL. Same vendor-apt-repo pattern phase A uses for Tailscale, so it still
-      gets security updates (unlike a curl-pipe-to-shell install).
-      Verified `v24.18.1` / npm `11.16.0`.
-- [x] **`x11vnc` systemd unit**, bound to `127.0.0.1`, **not enabled** — started
-      by hand for the one-time login, reached over an SSH tunnel
-- [x] **`social-chromium` wrapper**: no `--remote-debugging-port`, loads the
-      extension, persistent profile at `/mnt/data/browser/social`
-- [x] Keep `headed-chromium` (with CDP) for **agent browser testing** — our own
-      apps, nothing to hide from. Test and social browsers stay separate.
-- [x] **No `openbox`** — no evidence any detector checks for a window manager.
-      The measured Xvfb config needs `xauth`, not a WM.
-- [x] **No static IP.** Tried and reverted; see `SPEC.md` → Decisions.
-- [x] Fixed a real bug found on the way: phase A used `systemctl start` on a
-      `RemainAfterExit=yes` oneshot, which is a **no-op** once the unit is
-      `active (exited)`. So re-running the startup script never reinstalled
-      anything. Now `systemctl restart`.
-- [x] `./run validate` + `./run verify` → 31/31
-- [x] `chmod 600 config.env` (held a live Tailscale API key at `644`)
-- [x] **Timezone**: browser reported UTC and LinkedIn stored `timezone=UTC`
-      against an Israeli account. `TZ=Asia/Jerusalem` in the social wrapper only,
-      so system logs stay UTC. LinkedIn now stores `Asia/Jerusalem`.
-- [x] **WebGL**: was entirely absent (`getContext('webgl')` → `null`). Now
-      reports `ANGLE (Mesa/X.org, llvmpipe ...)`, i.e. what a real Linux desktop
-      with no GPU driver reports — chosen over SwiftShader, which is headless
-      Chrome's historical signature. See SPEC.md for the measurements.
-- [x] **Guard against CDP on the social browser.** `"$@"` passed straight
-      through, so `social-chromium --remote-debugging-port=...` silently made it
-      the one thing it must never be (found by doing it accidentally while
-      measuring). Now refuses with exit 64 unless `ALLOW_CDP=1`.
-- [ ] `hardwareConcurrency` is 2 vs a typical desktop's 4-16. Only fixable by
-      paying for a bigger machine type; left alone deliberately.
-- [ ] Fold in or drop the packages installed ad-hoc during measurement so they
-      are reproducible: `python3-websocket`, `x11-utils`, `xdotool`
+### Blocking check
 
----
+- [ ] **Pause and unpause the VM, then confirm the session survives.** This is a
+      decision point, not a detail (`SPEC.md` open question 2).
 
-## Phase 1 — extension + controller skeleton
+### Phase 1 — extension + controller skeleton
 
-Goal: a round trip. Controller sends `ping`, extension answers, JSON lands on disk.
-No LinkedIn yet.
+Goal: a round trip. Controller sends `ping`, extension answers, JSON lands on
+disk. No LinkedIn yet.
 
-- [ ] `extension/manifest.json` — MV3, `"minimum_chrome_version": "116"`,
-      host permission for `linkedin.com` + the localhost WS, **no**
+- [ ] `extension/manifest.json` — MV3, `"minimum_chrome_version": "116"`, host
+      permission for `linkedin.com` + the localhost WS, **no**
       `web_accessible_resources`, no other permissions
 - [ ] Pack with a fixed `key` so the extension ID is stable across reloads
       (unpacked IDs derive from the install path)
-- [ ] `extension/sw.js` — service worker: opens `ws://127.0.0.1:8765`,
-      **keepalive ping every 20s** (30s idle timeout, WS activity resets it),
-      reconnect with backoff on `onclose`
-- [ ] `extension/content.js` — isolated world, reads only, no injection;
-      relays to the service worker via `chrome.runtime` messaging
-- [ ] `controller/server.js` — Node WS server on `127.0.0.1:8765`; treats
-      "no client connected" as normal, not an error. Node rather than Python so
-      one language covers the service worker, the content script and the server,
-      with no build step or bundler keeping three dialects in sync.
+- [ ] `extension/sw.js` — service worker: opens `ws://127.0.0.1:8765`, keepalive
+      ping every 20s (30s idle timeout, WS activity resets it), reconnect with
+      backoff on `onclose`
+- [ ] `extension/content.js` — isolated world, reads only, no injection; relays to
+      the service worker via `chrome.runtime` messaging
+- [ ] `controller/server.js` — Node WS server on `127.0.0.1:8765`; treats "no
+      client connected" as normal, not an error
 - [ ] `scripts/deploy-app.sh` + `./run deploy` — rsync `extension/` and
-      `controller/` to the VM over Tailscale (app code is not Terraform's job)
-- [ ] Confirm whether `host_permissions` is needed for `ws://127.0.0.1`
-      (WS URLs match against the `http`/`https` equivalent). Fails loudly.
+      `controller/` to `/mnt/data/app/` over Tailscale (`social-chromium` already
+      expects the extension at `/mnt/data/app/extension`)
+- [ ] Confirm whether `host_permissions` is needed for `ws://127.0.0.1` (WS URLs
+      match against the `http`/`https` equivalent). Fail loudly either way.
 
----
+### Phase 2 — read something
 
-## Phase 2 — the login
-
-The real risk. Do it before building anything on top.
-
-- [ ] Start `x11vnc` by hand; tunnel it over SSH; confirm a usable session
-- [ ] Log into LinkedIn **by hand**, into the persistent social profile
-- [ ] Zero extensions loaded other than ours; never use incognito (cookies
-      extracted from incognito die in ~1h vs weeks from a normal profile)
-- [ ] Note the browser's user agent and keep it stable afterwards
-- [ ] Stop `x11vnc` again
-- [ ] **Pause and unpause the VM. Confirm the session survives.** This is the
-      decision point — if it does not, the design changes.
-
----
-
-## Phase 3 — read something
-
-Start with notifications, not the feed: `voyagerIdentityDashNotificationCards`
-is verified working browserless, whereas the home feed operation
-(`voyagerFeedDashMainFeed`) has a captured query ID that **nobody has
-demonstrated executing**.
-
-- [ ] Harvest notifications first — the surface with evidence behind it
-- [ ] Then the feed via DOM read, **harvesting during the scroll**: the feed is
-      virtualised and recycles nodes, so nothing is there afterwards
+- [ ] Harvest notifications first (`voyagerIdentityDashNotificationCards` is the
+      surface with evidence behind it), then the feed via DOM read
+- [ ] Harvest **during** the scroll — the feed is virtualised
 - [ ] Persist seen post IDs on `/mnt/data`
-- [ ] Treat **zero items parsed as an error**, never as an empty feed
-- [ ] Read status codes correctly: `302 → /uas/login` is the only session-death
-      signal; **`403` means a missing `csrf-token` header, not a ban**; `429`
-      means slow down
-- [ ] Echo `JSESSIONID` as the `csrf-token` header (quotes stripped) if calling
-      Voyager directly
-
-### Rules for the scrolling/harvest loop
-
-- [ ] **Never a fixed interval and never a round clock time** — mechanical
-      timing is a stronger signal than anything about the IP
-- [ ] Randomise spacing; run on demand rather than on a schedule
-- [ ] Read-only. No likes, comments, connects, or profile views.
+- [ ] Alert on zero items parsed; never treat it as an empty feed
+- [ ] Handle `302 → /uas/login` (session dead), `403` (missing `csrf-token`
+      header), `429` (slow down) distinctly
+- [ ] Park the browser on `about:blank` or stop it between reads — a browser
+      sitting on `/feed/` costs ~1 core and 1168 MB continuously
 
 ---
 
-## Explicitly not doing
+## Housekeeping
 
-- **No scheduled poller.** Fixed-interval polling is itself a detection signal.
-- **No notification stream to the phone.** Not spamming the phone.
-- **No openbox** — folklore; see `SPEC.md`.
-- **No residential/commercial proxy** — vendor-driven advice with no measurement
-  behind it. Revisit only if a challenge actually appears.
-- **No provider migration.** Money is no longer the optimisation target; pausing
-  the VM covers cost, and GCP bills a stopped instance for disks only.
-- **No static IP and no proxy/exit-node egress.** The whole IP-stability premise
-  is weakly evidenced (see `SPEC.md`). Revisit only if a challenge actually
-  appears — and note the phone is the *worst* candidate for an exit node, because
-  it roams (WiFi → LTE → CGNAT), Doze throttles sustained forwarding, and
-  Tailscale exit nodes **fail closed**, so traffic stops when the phone wanders
-  off rather than falling back. The router is the sane option if one is ever
-  needed: always on, never moves, same residential address.
-- **Do not log in on the laptop and copy the `li_at` cookie to the box.** That
-  creates the session on one address and uses it from another, which is the one
-  transition with real reports behind it. Logging in through VNC into the
-  browser *on the box* makes login and use share an IP automatically.
-- **Meta (Facebook/Instagram) is out of scope** until LinkedIn has run cleanly
-  for weeks. Accounts Center links them, so enforcement can cascade.
-
----
-
-## Known risks to keep in view
-
-- **DOM scraping is fragile.** Generated class names churn; the feed is
-  virtualised. Reading response bodies would be sturdier but is not practical in
-  MV3 (`declarativeNetRequest` and `webRequest` cannot read bodies; patching
-  `window.fetch` means touching the page; `chrome.debugger` *is* CDP).
-- **Scrolling emits no `wheel` or `pointer` events.** Extensions cannot forge
-  trusted input — only CDP can, which is what we are avoiding. Residual
-  difference from a real user; accepted.
-- **Software WebGL renderer** (`SwiftShader`/`llvmpipe`) marks the box as a
-  GPU-less VM, and LinkedIn does collect the renderer string. Unfixable here.
-- **Service workers die unpredictably.** Keepalive prevents *idle* death only;
-  reconnect logic is mandatory.
-- **ToS.** LinkedIn's `robots.txt` is `Disallow: /` and the User Agreement
-  prohibits automation. Read-only access to one's own feed has no reported
-  enforcement precedent, but that is absence of evidence, not safety.
+- [ ] `python3-websocket`, `x11-utils` and `xdotool` were installed by hand during
+      measurement and are in no committed script and no phase B wave. Either drop
+      them or add them to `startup.tf`, so a rebuilt box matches this one.
+- [ ] `scripts/agent-stress.mjs`, `box-agent-stress.sh` and
+      `box-agent-supervisor.sh` are uncommitted and hand-driven over SSH. Commit
+      them with the concurrency numbers they produce, or delete them.
