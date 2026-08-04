@@ -34,6 +34,55 @@ and several concurrent agents plus browsers will not fit it.
 
 ---
 
+## Goal 4 (primary): what the pieces actually are
+
+Researched, not yet built. Recorded so it is not re-researched.
+
+**The runner is opencode**, and its architecture already fits: `opencode` is a
+server with clients attached, not a monolithic TUI.
+
+- `opencode serve --port N --hostname H` — headless HTTP server, OpenAPI 3.1
+  spec at `/doc`. Default `127.0.0.1:4096`.
+- `opencode web` — **a full browser UI already exists**: session list, active
+  sessions, server status. So the phone "app" does not have to be written from
+  scratch to get status and replies; Chrome on Android plus Add to Home Screen
+  covers a lot of it.
+- `opencode attach http://host:port` — attach a terminal TUI to the *same*
+  server, sharing sessions and state. So phone and laptop can drive one session.
+- Auth: `OPENCODE_SERVER_PASSWORD` (+ optional `OPENCODE_SERVER_USERNAME`,
+  default `opencode`) gives HTTP basic auth. Unset means unsecured.
+
+The endpoints that map directly onto what the phone needs:
+
+| Need | Endpoint |
+|---|---|
+| "give me their status" | `GET /session/status`, `GET /session/:id/todo`, `GET /project` |
+| "let me answer them" | `POST /session/:id/message`, `/prompt_async` (fire-and-forget) |
+| **approve/deny an agent's request** | `POST /session/:id/permissions/:permissionID` |
+| push, rather than polling | `GET /event` and `/global/event` (SSE) |
+| stop a runaway agent | `POST /session/:id/abort` |
+
+`/event` as an SSE stream plus the existing `notify-phone` path is the whole
+notification story: nothing new has to be invented to get an alert on the phone
+when an agent needs a decision.
+
+**Phone (measured, not assumed):** `SM-S928B`, Android 16, `aarch64`, already a
+tailnet node. Termux has `node`, `python`, `termux-notification` and
+`termux-tts-speak`. TTS on the phone matters for the assistant-replacement goal.
+`termux-notification` supports action buttons, so an approve/deny prompt can be
+answered from the notification shade without opening anything.
+
+**Install shape:** opencode is a single ~180 MB binary, installed by the vendor
+script to `~/.opencode/bin/opencode`, not from a package manager. Workstation is
+on `1.18.11`; the box should be pinned to the same version, not floating.
+
+**Not yet answered:** how opencode authenticates to a model provider on a
+headless box with no browser to complete an OAuth flow. `PUT /auth/:id` and
+`POST /provider/{id}/oauth/authorize` exist, so it is solvable, but nothing an
+agent does works until it is solved.
+
+---
+
 ## What is built
 
 Verified by `./run verify` (31 checks); has survived a full `cleanup --yes` +
