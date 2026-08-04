@@ -124,17 +124,100 @@ sitting on `/feed/` between reads — park it on `about:blank`, or stop it and l
 `./run login --verify` confirm the session from the cookie jar without a browser
 running at all.
 
-### Still unmeasured, and it is the number that matters
+### The language server is the per-client cost
 
-Everything above is an **idle floor**. The real per-client cost is an agent
-actively working: model streaming, tool calls, a build running, and above all
-**LSP servers**, which for a large TypeScript or Rust repo can individually
-exceed every figure in that table. That measurement needs real client repos and
-connected providers.
+The figures above are an idle floor. The dominant real cost is the **LSP**, and
+it does not need a connected provider to measure: indexing costs the same
+whether a human or an agent caused the file to be opened. `./run lsp-probe`
+(`scripts/lsp-probe.mjs`) drives a server directly over stdio — initialize,
+`didOpen` a batch of real files, wait for it to go quiet — and samples the
+server's whole process tree, since tsserver and pyright both fork children.
 
-Until then the honest position is: the floor is known and small, the ceiling is
-unknown, and the first real client workload should be measured with
-`./run measure --label "client X, real task"` before a second one is added.
+Corpus: `microsoft/TypeScript` (~600k LOC, `npm ci` complete) at
+`/mnt/data/repos/ts`, and `pydantic/pydantic` at `/mnt/data/repos/pyd`. 40 real
+source files opened, files under 2 KB skipped so barrel files cannot understate
+the type-checking work.
+
+| Language server | Peak PSS | Peak RSS | Procs | Diagnostics |
+|---|---|---|---|---|
+| `typescript-language-server` (**opencode's default**) | **1263 MB** | 1410 MB | 4 | 64 |
+| `vtsls` | 1255 MB | 1402 MB | 4 | 22 |
+| `tsgo` (`@typescript/native-preview`) | **200 MB** | 200 MB | 1 | 1 |
+| `pyright-langserver` | 429 MB | 450 MB | 1 | 98 |
+
+`vtsls` and `typescript-language-server` land within 1% of each other because
+both are tsserver wearing different hats. Choosing between them is a features
+decision, not a memory one.
+
+**Measure to settle, not to a timer.** A first run with an 8-second quiet window
+reported vtsls at 869 MB. Given 30 seconds of quiet it reached 1255 MB — the
+early number was a 30% undercount, because the server had merely paused, not
+finished. `--quiet 30` is the floor for a repo of this size.
+
+### What this means for sizing
+
+Per client = 221 MB marginal opencode + its LSP. Against ~6.3 GB usable
+(MemTotal less the 492 MB idle box and ~15% headroom):
+
+| Client profile | Per client | Fits in RAM |
+|---|---|---|
+| TypeScript on tsserver (default) | ~1480 MB | **~4** |
+| TypeScript on tsgo | ~420 MB | ~14 |
+| Python on pyright | ~650 MB | ~9 |
+
+**Switching TypeScript clients from tsserver to tsgo is worth more than tripling
+the box's RAM**, and costs nothing but a config block. With tsserver, four
+TypeScript clients exhaust an 8 GB box; with tsgo, RAM stops being the binding
+constraint at all and 2 vCPU binds first — consistent with the load figures
+above.
+
+**The caveat that keeps this honest:** tsgo emitted 1 diagnostic where tsserver
+emitted 64. Some of that 6× gap is efficiency (it is a native Go port of the
+compiler) and some is work it did not do — it is a preview with incomplete
+feature coverage. Treat 200 MB as a lower bound, and re-measure per client repo
+with `./run lsp-probe` rather than assuming it holds.
+
+### opencode does not ship vtsls or tsgo
+
+Confirmed by reading the binary's LSP registry: the built-in servers are
+`typescript`, `pyright`, `ty`, `eslint`, `gopls`, `rust`, `vue`, `svelte`,
+`zig`, `ruby`, `elixir`, `csharp`, `java`, `clangd`. TypeScript means
+`typescript-language-server`, which is the most expensive option measured, and
+it only spawns if `typescript/lib/tsserver.js` resolves from the project — so a
+client repo without typescript installed silently gets no TS LSP at all.
+`pyright` is auto-downloaded when absent unless `disableLspDownload` is set.
+`ty` (Astral's) exists but is gated behind `experimentalLspTy`, and enabling it
+deletes pyright.
+
+Both `vtsls` and `tsgo` work as custom servers. Verified accepted by the running
+server via `GET /config`:
+
+```json
+{
+  "lsp": {
+    "typescript": { "disabled": true },
+    "tsgo": {
+      "command": ["tsgo", "--lsp", "--stdio"],
+      "extensions": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx"]
+    }
+  }
+}
+```
+
+Per-client isolation makes this a per-client decision: each client's own
+`opencode.json` picks its LSP, so a client on a small repo can afford tsserver
+while a large one is moved to tsgo.
+
+### Driving real agent work needs a provider
+
+Tool execution cannot be triggered over the API without a model:
+`/experimental/tool` only *lists* tools and requires `provider` and `model`
+query parameters. LSPs spawn lazily when a session's read/edit tool touches a
+file, so `GET /lsp` returns `[]` on a server nobody has prompted. Once a
+provider is connected, `POST /session/:id/message` drives an agent that runs
+tools for real, and `./run measure` alongside it captures the full picture —
+model streaming, tool subprocesses, builds and LSP together. That is the one
+remaining measurement, and it is the only one that needs credentials.
 
 ---
 

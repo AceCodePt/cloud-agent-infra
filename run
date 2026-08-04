@@ -45,6 +45,10 @@ Agents
                    RSS) because per-client isolation means several copies of the
                    same binaries sharing pages. --seconds N --interval S
                    --label X --json
+  lsp-probe [args] Measure what one language server costs on a real repo. The
+                   LSP, not opencode, is the dominant per-client cost, and it
+                   needs no model or API key to measure. --cmd "vtsls --stdio"
+                   --root DIR --ext .ts --files N --settle S --quiet S --json
 
 Social  (platform defaults to linkedin, the only one wired up)
   login [pf]       Log a social account in BY HAND, in the browser on the box,
@@ -139,6 +143,12 @@ measure)
   # printf %q, not $*: a --label with spaces in it otherwise arrives at the
   # remote shell as separate words and argparse rejects it.
   ssh_vm "sudo -n python3 /tmp/measure-resources.py $(printf '%q ' "$@")"
+  ;;
+
+lsp-probe)
+  load_config
+  ssh_vm "cat > /tmp/lsp-probe.mjs" <scripts/lsp-probe.mjs
+  ssh_vm "node /tmp/lsp-probe.mjs $(printf '%q ' "$@")"
   ;;
 
 # --- Social ------------------------------------------------------------
