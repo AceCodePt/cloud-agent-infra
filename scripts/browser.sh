@@ -78,16 +78,46 @@ stop)
 
 # open
 open)
+  # Viewer preference depends on the session. Under Wayland, prefer a client that
+  # speaks Wayland natively: an X11-only viewer needs XWayland, whose socket in
+  # /tmp/.X11-unix is routinely destroyed by tmp cleaners while the Xwayland
+  # process keeps running — the socket stays bound in the kernel but unreachable,
+  # so every X11 client dies with "Can't open display". Measured that exact
+  # failure; it reads like a bug in this script and is not one.
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    CANDIDATES=(wlvncc gvncviewer remmina vinagre vncviewer)
+  else
+    CANDIDATES=(vncviewer wlvncc gvncviewer remmina vinagre)
+  fi
   viewer=""
-  for c in vncviewer wlvncc gvncviewer remmina vinagre; do
+  for c in "${CANDIDATES[@]}"; do
     if command -v "$c" >/dev/null 2>&1; then
       viewer="$c"
       break
     fi
   done
-  [[ -n "$viewer" ]] && note "using VNC client: $viewer" || die "no VNC client on this machine. Install one:
-    sudo pacman -S tigervnc      # provides vncviewer; runs fine under XWayland
+  [[ -n "$viewer" ]] || die "no VNC client on this machine. Install one:
+    sudo pacman -S tigervnc      # vncviewer; X11-only, needs a working XWayland
+    sudo pacman -S remmina       # GTK, speaks Wayland natively
   then re-run: ./run browser $URL"
+  note "using VNC client: $viewer"
+
+  # An X11-only viewer with an unreachable DISPLAY fails instantly and
+  # unhelpfully. Catch it here, before starting x11vnc and a tunnel that then
+  # have to be torn down.
+  if [[ "$viewer" == vncviewer || "$viewer" == vinagre ]]; then
+    [[ -n "${DISPLAY:-}" ]] || die "$viewer is an X11 client but DISPLAY is unset.
+  On Wayland, install a native client:  sudo pacman -S remmina"
+    if command -v xset >/dev/null 2>&1 && ! timeout 5 xset q >/dev/null 2>&1; then
+      die "$viewer is an X11 client and DISPLAY=$DISPLAY cannot be opened.
+  Every X11 app on this machine is broken right now, not just this one
+  (check: xset q).
+  Usually XWayland's socket was deleted from /tmp/.X11-unix while Xwayland
+  kept running, which no amount of retrying fixes. Either:
+    - log out and back in, to restart XWayland, or
+    - use a Wayland-native client:  sudo pacman -S remmina"
+    fi
+  fi
 
   vm_online || die "$INSTANCE is not on the tailnet. Try: ./run up"
 
@@ -149,10 +179,19 @@ EOF
   echo
 
   note "starting $viewer"
+  # Do NOT swallow the exit status: a viewer that dies on startup used to look
+  # identical to a session the user closed normally — the script just cleaned up
+  # and said nothing.
+  rc=0
   case "$viewer" in
-  vncviewer) "$viewer" -Shared "localhost:$PORT" || true ;;
-  wlvncc) "$viewer" localhost "$PORT" || true ;;
-  *) "$viewer" "vnc://localhost:$PORT" || true ;;
+  vncviewer) "$viewer" -Shared "localhost:$PORT" || rc=$? ;;
+  wlvncc) "$viewer" localhost "$PORT" || rc=$? ;;
+  *) "$viewer" "vnc://localhost:$PORT" || rc=$? ;;
   esac
+  if [[ "$rc" -ne 0 ]]; then
+    warn "$viewer exited non-zero ($rc)."
+    warn "If it never drew a window, this is a LOCAL display problem, not the box:"
+    warn "  the browser is still running on :99 — re-attach once the viewer works."
+  fi
   ;;
 esac

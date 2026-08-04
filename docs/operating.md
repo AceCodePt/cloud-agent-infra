@@ -494,3 +494,12 @@ that costs money.
   `--connect-timeout --max-time` or a half-open server hangs the whole run; the
   sampler prints peaks on SIGTERM so a short workload doesn't lose its numbers;
   detached processes must redirect all three fds or ssh waits on the channel.
+- **`./run browser` failing with `Can't open display` is a LOCAL problem, not the
+  box.** A tmp cleaner can delete XWayland's socket from `/tmp/.X11-unix` while
+  the Xwayland process keeps running: the socket stays bound in the kernel (still
+  visible in `ss -xl`) but nothing can reach it, so every X11 client dies —
+  `xset q` fails too, which is how to tell it apart in one command. Retrying
+  never helps; either log out and back in to restart XWayland, or use a
+  Wayland-native VNC client (`remmina`) so XWayland is not in the path at all.
+  `browser.sh` now preflights this instead of starting a tunnel it has to tear
+  down.
