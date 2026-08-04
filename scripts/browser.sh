@@ -164,6 +164,14 @@ open)
     sleep 1
   done
 
+  # The escape hatch has to be on screen BEFORE the viewer launches. The viewer
+  # fills the screen (on a tiling WM it may also open on another workspace), so
+  # "Ctrl-C here" is useless advice once you cannot find "here" any more.
+  case "$viewer" in
+  vncviewer) ESCAPE="press F8 for the TigerVNC menu (Exit viewer)" ;;
+  *) ESCAPE="close the $viewer window" ;;
+  esac
+
   cat <<EOF
 
 $(printf '\033[1m')The box's screen is now in the VNC window.$(printf '\033[0m')
@@ -171,8 +179,11 @@ $(printf '\033[1m')The box's screen is now in the VNC window.$(printf '\033[0m')
   The browser ($BROWSER_CMD) is the whole 1920x1080 screen. There is no window
   manager, so no title bar and nothing to alt-tab -- that is intentional.
 
-  Ctrl-C here when done. The browser stays up; x11vnc and the tunnel are shut
-  down for you.
+$(printf '\033[1m')  Getting back out:$(printf '\033[0m') $ESCAPE, or use your window manager's
+  close-window key. The viewer fills the screen and on a tiling WM can open on
+  a different workspace than this terminal.
+  Then Ctrl-C here. The browser stays up on :99; x11vnc and the tunnel are shut
+  down for you. To stop the browser too: ./run browser --stop
 
 EOF
   printf '%s\n' "  (url: $URL, profile: $PROFILE)"
