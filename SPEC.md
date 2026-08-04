@@ -24,7 +24,7 @@ priority column is what matters.
 
 | # | Goal | Priority | State |
 |---|---|---|---|
-| 4 | Agentic workflows for client companies: multiple agents, isolated per client, with agent-driven browser testing | **PRIMARY — the reason the machine exists** | Runner installed and measured; **no design, no per-client anything** |
+| 4 | Agentic workflows for client companies: multiple agents, isolated per client, with agent-driven browser testing | **PRIMARY — the reason the machine exists** | Runner installed and measured; **isolation + concurrency decided (Unix user per client, 5–10 clients), no per-client accounts built yet** |
 | 1 | A reliable, reproducible cloud box reachable only over Tailscale, able to notify the phone | Substrate for the above | **Built and verified** |
 | 2 | Track posts in the LinkedIn feed and notify the phone | Secondary | Logged in, session verified; nothing reads the feed |
 | 3 | Extend to Facebook + Instagram: relevant comments, suggest replies | Secondary | Not started |
@@ -80,8 +80,10 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
 ## What does not exist
 
 - **Goal 4 has no design.** No per-client Unix accounts, no container runtime, no
-  `gh`, no client checkouts, no isolation model, no concurrency target. The runner
-  binary being installed is not the same as goal 4 being started.
+  `gh`, no client checkouts. Isolation and concurrency are *decided* (Unix user
+  per client, 5–10 clients — see `docs/decisions/agents-and-sizing.md`) but
+  nothing is built. The runner binary being installed is not the same as goal 4
+  being started.
 - **Nothing reads the feed.** No `extension/`, no `controller/`, no
   `./run deploy`.
 - `/mnt/data` holds the browser profiles, Tailscale state, the phone notify key,
@@ -116,13 +118,13 @@ No CDP anywhere in that chain, which is the entire point.
 
 ## Open questions
 
-**1. What is goal 4, concretely?** The concurrency half is now measured: the box
-degrades gracefully, never halts (100% completion to 24 concurrent agents; CPU
-saturates ~2–4 active). Still open: whether isolation is a Unix user, a
-container or a whole box per client, and whether browser testing means one
-browser or one per agent. Isolation determines sizing, which determines whether
-the provider gap is $154/yr or $1,353/yr. All infrastructure work waits on the
-isolation choice.
+**1. What is goal 4, concretely?** Settled, in `docs/decisions/agents-and-sizing.md`:
+5–10 clients with ~2 simultaneously active agents; isolation is a **Unix user per
+client**; browser testing is **one shared browser, or a browser served over the
+tailnet from outside** (not one per agent); no resize, no migration — the box
+stays `e2-standard-2` on GCP. Still open: wiring the phone into an approval loop
+and re-measuring over a long real session. The `$154/yr` vs `$1,353/yr` question
+is answered: neither, at the current scale.
 
 **2. Does the social session survive a VM pause/unpause?** Untested, and it is a
 decision point rather than a detail: if it does not, goal 2's whole "log in once

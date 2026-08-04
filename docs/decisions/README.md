@@ -73,7 +73,10 @@ the premise is unevidenced".
 | Language server chosen per client repo; tsgo for large TypeScript | Made |
 | Node rather than Python for anything the extension talks to | Made |
 | Measure token spend before optimising the VM further | Made |
-| Per-client isolation model (Unix user vs container vs box) | Parked |
+| Concurrency target: 5–10 clients, ~2 simultaneously active | Made |
+| Isolation model: Unix user per client | Made |
+| Browser testing: one shared browser, or served over the tailnet from outside | Made |
+| Phone approval loop | Open |
 | Build goal 2 before touching infrastructure | Superseded |
 
 ### [history.md](history.md) — superseded architecture

@@ -147,13 +147,51 @@ One language across the service worker, the content script and the WebSocket
 server, with no build step or bundler keeping three dialects in sync. This is why
 Node 24 is provisioned on the box at all.
 
-## Per-client isolation model — **Parked**
+## Concurrency target: 5–10 clients, ~2 simultaneously active — **Made**
 
-The measurements assume one Unix user per client, because that is what makes PSS
-the right metric. Whether isolation is actually a Unix user, a container, or a
-whole box per client is **not decided** — at ~$19/mo for a small VPS,
-one-box-per-client is affordable isolation that GCP pricing forecloses. This is
-part of open question 1 in `SPEC.md` and blocks sizing.
+Set by the operator, stated as a pair because the two numbers answer different
+questions: "how many clients does the box hold" and "how much agent work is
+really happening at once". Measured facts that bound the choice: the box
+degrades gracefully and never halts (100% completion to K=24), so the ceiling is
+not a hard one; CPU saturates at roughly two actively-working agents on 2 vCPU.
+
+At 5–10 clients with ~2 active agents, **neither resize nor migration is
+wanted** — the box stays `e2-standard-2` on GCP as it is. Any future change is
+re-decided against the latency rule, not against a capacity ceiling.
+
+## Isolation model: Unix user per client — **Made**
+
+Each client gets a Unix account, its own `opencode` data dir and its own
+`opencode.json` (per-client LSP choice is the point of the tsgo decision). No
+container runtime. This was the assumption the PSS measurements were built on;
+it is now the decision, so sizing numbers carry straight across.
+
+What the operator accepts with this choice:
+
+- **A user can only damage themselves.** Files, sessions and servers are owned
+  per account; there is no cross-client shell access and no shared writable
+  state between clients.
+- **The runner stays root-owned and shared** (`/usr/local/bin/opencode`), so no
+  client can modify the binary itself.
+- **It is not memory-safe or network-proof.** A malicious session inside a
+  client account could reach the machine's local network and other processes.
+  The threat model is "client work is confidential from other clients", not
+  "client work is hostile". If a client ever becomes hostile, move that account
+  to its own ~$19/mo box.
+
+## Browser testing: one shared browser, or a browser served over the tailnet from outside — **Made**
+
+Not one browser per agent. Either the agents share the box's `headed-chromium`,
+or browser testing happens through a browser service reachable over the
+tailnet and hosted outside this box. Both keep per-client memory flat; one
+browser per agent would not (each headed Chromium is ~530 MB + ~1 core on a busy
+page).
+
+## Phone approval loop — **Open**
+
+Not started. Stays in `TASK.md`; the endpoints it needs are already enumerated
+above (`/event` SSE + `/session/:id/permissions/:permissionID`), so it is an
+integration task, not a design one.
 
 ## Build goal 2 before touching infrastructure — **Superseded**
 

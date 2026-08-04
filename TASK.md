@@ -10,23 +10,25 @@ built.
 
 ---
 
-## Goal 4 (primary) — specify it before building anything
+## Goal 4 (primary) — isolation and concurrency decided; build next
 
-Everything about sizing, isolation and the provider is blocked on this. The
-output of the first two items is a decision document, not code.
+Settled and recorded in `docs/decisions/agents-and-sizing.md`:
+5–10 clients with ~2 simultaneously active agents; **Unix user per client**;
+browser testing is one shared browser, or a browser served over the tailnet
+from outside; **neither resize nor migration** — the box stays as it is.
 
-- [ ] Write down the concurrency target: how many clients, how many
-      *simultaneously active* agents. Measured: the CPU saturates around ~2–4
-      active agents on 2 vCPU, but the box **degrades gracefully and never
-      halts** — 100% completion up to 24 concurrent sessions (see
-      `docs/measurements.md`). So the target should be set on acceptable
-      latency, not on a hard ceiling.
-- [ ] Decide the isolation model — Unix user per client, container per client, or
-      box per client — and record it in `docs/decisions/agents-and-sizing.md`.
-- [ ] Decide whether agent browser testing means one shared browser or one per
-      agent (each headed Chromium is ~530 MB and a browser on a busy page is
-      ~1 core).
-- [ ] Only then: resize, or migrate provider, or neither.
+- [x] Concurrency target — 5–10 clients, ~2 simultaneously active agents. The
+      box **degrades gracefully and never halts** (100% completion up to 24
+      concurrent sessions, see `docs/measurements.md`), so the target is set on
+      acceptable latency, not a hard ceiling.
+- [x] Isolation model — **Unix user per client**, no container runtime. Recorded
+      in `docs/decisions/agents-and-sizing.md`; the PSS measurements carry over.
+- [x] Browser model — one shared browser, or a browser served over the tailnet
+      from outside; **not** one browser per agent (each headed Chromium is
+      ~530 MB + ~1 core on a busy page).
+- [x] Resize or migrate — **neither**. The box stays `e2-standard-2` on GCP.
+- [ ] Build the first per-client account: `useradd`, per-client `opencode.json`,
+      first client checkout, `opencode serve` as that user, verify isolation.
 - [ ] Wire the phone into an approval loop: `GET /event` (SSE) → `notify-phone`
       with action buttons → `POST /session/:id/permissions/:permissionID`.
 - [ ] Re-measure with a real client workload over a long session; the current
@@ -80,9 +82,14 @@ disk. No LinkedIn yet.
 
 ## Housekeeping
 
-- [ ] `python3-websocket`, `x11-utils` and `xdotool` were installed by hand during
-      measurement and are in no committed script and no phase B wave. Either drop
-      them or add them to `startup.tf`, so a rebuilt box matches this one.
+- [x] `python3-websocket`, `x11-utils` and `xdotool` were installed by hand during
+      measurement and in no committed script. Resolved: **removed the two true
+      cruft packages** (`python3-websocket`, `xdotool` + their now-orphaned
+      deps) from the box — nothing in the repo or the planned architecture
+      (Node controller, bash+ssh `notify-phone`) uses them. `x11-utils` is a
+      hard `Depends` of `chromium-common`, so a rebuilt box gets it
+      automatically and nothing needs adding to `startup.tf`. Verified with
+      `./run verify` (31/31) after the removal.
 - [x] The measurement toolchain (`agent-stress.mjs`, `box-*-stress.sh`,
       `box-agent-supervisor.sh`, `drive-agent*.mjs`, `box-setup-agent.sh`,
       `box-run-agent.sh`) is committed and documented in
