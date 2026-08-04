@@ -78,6 +78,56 @@ and exports the right `PATH`; the ad-hoc probe did not. Lesson: a negative resul
 from a one-off SSH probe needs the same `PATH` discipline as the committed checks,
 or it is not evidence.
 
+### Fingerprint defects found after the first real login, and fixed
+
+Both of these were found by measuring the browser the account is actually logged
+into, and both outrank the IP question that earlier sessions spent so long on:
+they are properties of the browser, always sent, and verifiable by the site.
+
+**1. Timezone said UTC.** Not inferred — LinkedIn read the clock and stored
+`timezone=UTC` in a cookie, against an account whose entire history is Israeli.
+A server should be UTC; a browser claiming to be this person should not.
+
+Fixed with `TZ` in the `social-chromium` wrapper only, so system logs stay UTC.
+Confirmed end to end: `Intl.DateTimeFormat().resolvedOptions().timeZone` →
+`Asia/Jerusalem`, `getTimezoneOffset()` → `-180`, and LinkedIn rewrote its own
+cookie to `timezone=Asia/Jerusalem` on the next page load.
+
+**2. WebGL did not exist.** `getContext('webgl')` returned `null`; the log said
+`ContextResult::kFatalFailure: WebGL1 blocklisted`. Chrome 136+ refuses software
+WebGL unless told otherwise, and this box has no GPU. Essentially every real
+Chrome has WebGL, so its absence is a far louder signal than a datacenter IP.
+
+Three options, measured rather than assumed:
+
+| Config | `UNMASKED_RENDERER_WEBGL` | Verdict |
+|---|---|---|
+| as shipped | *(no context at all)* | rare, obviously broken |
+| `--enable-unsafe-swiftshader` | `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)...), SwiftShader driver)` | works, but "SwiftShader" is headless Chrome's historical calling card |
+| `--ignore-gpu-blocklist --use-gl=angle --use-angle=gl` + `LIBGL_ALWAYS_SOFTWARE=1` | `ANGLE (Mesa/X.org, llvmpipe (LLVM 15.0.6 256 bits), OpenGL 4.5)` | **chosen** — what a real Linux desktop with no GPU driver reports |
+
+`--ignore-gpu-blocklist` is the flag that actually lifts the ban; the backend
+flags alone still measured `null`. llvmpipe also reports `MAX_TEXTURE_SIZE`
+16384 against SwiftShader's 8192, and WebGL2 works too. `libgl1-mesa-dri`
+(which provides `swrast_dri.so`) is now an explicit package rather than a
+transitive dependency of chromium, because a fingerprint now depends on it.
+
+**Still imperfect, accepted for now:** `hardwareConcurrency` is 2, where a real
+desktop is usually 4–16. Fixable only by paying for a bigger machine type.
+
+### Two measurement traps worth remembering
+
+**`/proc/<pid>/environ` lies about Chromium.** It showed `TZ` unset on a browser
+that was demonstrably running with `TZ` set. Chromium rewrites that memory region
+for process naming. Measure the *effect* (`Intl.DateTimeFormat()` over CDP on a
+throwaway profile), never the reported environment.
+
+**`pgrep -f` / `pkill -f` match the shell that runs them,** because the pattern is
+in that shell's own command line. As `pgrep` this produced two false positives; as
+`pkill` it killed the shell mid-command, so a browser launch silently never
+happened and left no log to explain it. Always bracket the first character:
+`[u]ser-data-dir=...`.
+
 ### Browser environment defects
 
 - `document.hasFocus()` → `False` while `visibilityState` → `visible`

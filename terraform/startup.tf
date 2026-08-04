@@ -251,8 +251,13 @@ UNIT
 #   CDP_PORT            default 9222 (use a different port per agent/browser)
 # AutomationControlled is disabled so navigator.webdriver stays false.
 export DISPLAY="$${DISPLAY:-:99}"
+# Software WebGL, for the same reason as social-chromium (see WEBGL note there):
+# without this, getContext('webgl') returns null and any app under test that
+# touches WebGL, a map or a chart silently breaks.
+export LIBGL_ALWAYS_SOFTWARE=1
 exec chromium --no-first-run --no-default-browser-check \
   --disable-blink-features=AutomationControlled \
+  --ignore-gpu-blocklist --use-gl=angle --use-angle=gl \
   --remote-debugging-port="$${CDP_PORT:-9222}" \
   --user-data-dir="$${BROWSER_PROFILE_DIR:-/mnt/data/browser/default}" \
   "$@"
@@ -283,16 +288,64 @@ CHROME
 #!/usr/bin/env bash
 # Real headful Chromium for authenticated social sessions.
 #   DISPLAY            default :99
-#   SOCIAL_PROFILE_DIR default /mnt/data/browser/social  (persist: cookies
+#   SOCIAL_PROFILE_DIR default /mnt/data/browser/social-linkedin  (cookies
 #                      harvested from a normal profile last weeks, from a
 #                      fresh/incognito context about an hour)
 #   EXT_DIR            default /mnt/data/app/extension   (our private, unlisted
 #                      extension; its ID is not in LinkedIn's scan list)
 set -euo pipefail
 export DISPLAY="$${DISPLAY:-:99}"
-PROFILE="$${SOCIAL_PROFILE_DIR:-/mnt/data/browser/social}"
+PROFILE="$${SOCIAL_PROFILE_DIR:-/mnt/data/browser/social-linkedin}"
 EXT="$${EXT_DIR:-/mnt/data/app/extension}"
-ARGS=(--no-first-run --no-default-browser-check --user-data-dir="$PROFILE")
+
+# TIMEZONE. The box runs UTC, which is right for a server and wrong for a
+# browser pretending to be this account's own. Measured: LinkedIn read the clock
+# and stored `timezone=UTC` in a cookie, against an account whose entire history
+# is Israeli. That is an incoherent story, and coherence is what this setup
+# optimises for -- more so than the IP, which roams for every phone user anyway.
+# Set per-browser rather than with timedatectl, so system logs stay UTC.
+export TZ="$${SOCIAL_TZ:-Asia/Jerusalem}"
+
+# WEBGL. Measured: getContext('webgl') returned null, because Chrome 136+ refuses
+# software WebGL unless told otherwise, and this box has no GPU. A browser with no
+# WebGL at all is a much louder signal than a datacenter IP: essentially every
+# real Chrome has it.
+#
+# The obvious flag, --enable-unsafe-swiftshader, works but reports
+#   ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)...), SwiftShader driver)
+# and "SwiftShader" is the historical calling card of headless Chrome -- trading
+# one tell for another. Routing ANGLE at Mesa instead reports
+#   ANGLE (Mesa/X.org, llvmpipe (LLVM 15.0.6 256 bits), OpenGL 4.5)
+# which is exactly what a real Linux desktop with no GPU driver reports, and is
+# common on real hardware. Both WebGL1 and WebGL2 work, with MAX_TEXTURE_SIZE
+# 16384 versus SwiftShader's 8192.
+#
+# --ignore-gpu-blocklist is what actually lifts the ban; the backend flags alone
+# leave it blocklisted (measured: still null without it).
+export LIBGL_ALWAYS_SOFTWARE=1
+ARGS=(--no-first-run --no-default-browser-check --user-data-dir="$PROFILE"
+  --ignore-gpu-blocklist --use-gl=angle --use-angle=gl)
+# This wrapper's whole reason to exist is that it never speaks CDP -- and that
+# promise was trivially breakable, because "$@" is passed straight through, so
+# `social-chromium --remote-debugging-port=9777` quietly turned it into exactly
+# the thing it is supposed not to be (found by doing it while measuring). Refuse,
+# unless someone deliberately opts in for a one-off measurement on a throwaway
+# profile. Enabling CDP on a profile with a real logged-in account is the single
+# worst thing that can be done here: Runtime.enable is the clearest automation
+# marker there is.
+for arg in "$@"; do
+  case "$arg" in
+  --remote-debugging-*)
+    if [ "$${ALLOW_CDP:-}" != "1" ]; then
+      echo "social-chromium: refusing $arg -- this browser must not expose CDP." >&2
+      echo "  For a throwaway measurement profile only: ALLOW_CDP=1 social-chromium ..." >&2
+      exit 64
+    fi
+    echo "social-chromium: WARNING -- CDP enabled via ALLOW_CDP on $PROFILE" >&2
+    ;;
+  esac
+done
+
 if [ -f "$EXT/manifest.json" ]; then
   ARGS+=(--disable-extensions-except="$EXT" --load-extension="$EXT")
 else
@@ -304,9 +357,15 @@ SOCIAL
 
     # A7f. Agent-writable profile root on the data disk (/mnt/data is
     # root-owned; agents run as your user and create their own subdirs).
-    # app/ holds deployed extension + controller code; social/ the logged-in
-    # profile, which must survive pause/unpause and rebuilds.
-    mkdir -p "$DATA_MNT/browser/social" "$DATA_MNT/app"
+    # app/ holds deployed extension + controller code.
+    #
+    # Only the PARENT browser/ directory is created here, not any individual
+    # profile. Profiles are per-platform (browser/social-linkedin, and one per
+    # platform after it) and Chromium creates its own --user-data-dir, so naming
+    # them here just means Terraform re-creating empty stragglers on every run
+    # under names it has no say in — which is exactly what an earlier hardcoded
+    # browser/social did after the profiles moved.
+    mkdir -p "$DATA_MNT/browser" "$DATA_MNT/app"
     chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
 
     # --- A8. Phone notifications (Termux) ---------------------------------
@@ -406,9 +465,14 @@ $APT install -y git stow tmux vim python3-pip
 #
 echo ">> wave 2: upgrade + headed-browser stack"
 $APT upgrade -y
+# libgl1-mesa-dri is listed explicitly even though chromium already pulls it in.
+# It provides swrast_dri.so (llvmpipe), which is what makes WebGL work at all on
+# this GPU-less box — see the WEBGL note in the social-chromium wrapper. A
+# fingerprint-relevant dependency should not be left implicit, where a future
+# repackaging could remove it and silently take WebGL back to null.
 $APT install -y build-essential xvfb xauth chromium \
   fonts-liberation fonts-noto-core zram-tools \
-  x11vnc python3-venv
+  x11vnc python3-venv libgl1-mesa-dri
 
 # Wave 2b: Node.js LTS from the vendor apt repo.
 #

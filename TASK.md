@@ -64,7 +64,20 @@ Why this shape, in one line each (evidence in `SPEC.md`):
       `active (exited)`. So re-running the startup script never reinstalled
       anything. Now `systemctl restart`.
 - [x] `./run validate` + `./run verify` → 31/31
-- [ ] `chmod 600 config.env` (currently `644`, holds a live Tailscale API key)
+- [x] `chmod 600 config.env` (held a live Tailscale API key at `644`)
+- [x] **Timezone**: browser reported UTC and LinkedIn stored `timezone=UTC`
+      against an Israeli account. `TZ=Asia/Jerusalem` in the social wrapper only,
+      so system logs stay UTC. LinkedIn now stores `Asia/Jerusalem`.
+- [x] **WebGL**: was entirely absent (`getContext('webgl')` → `null`). Now
+      reports `ANGLE (Mesa/X.org, llvmpipe ...)`, i.e. what a real Linux desktop
+      with no GPU driver reports — chosen over SwiftShader, which is headless
+      Chrome's historical signature. See SPEC.md for the measurements.
+- [x] **Guard against CDP on the social browser.** `"$@"` passed straight
+      through, so `social-chromium --remote-debugging-port=...` silently made it
+      the one thing it must never be (found by doing it accidentally while
+      measuring). Now refuses with exit 64 unless `ALLOW_CDP=1`.
+- [ ] `hardwareConcurrency` is 2 vs a typical desktop's 4-16. Only fixable by
+      paying for a bigger machine type; left alone deliberately.
 - [ ] Fold in or drop the packages installed ad-hoc during measurement so they
       are reproducible: `python3-websocket`, `x11-utils`, `xdotool`
 
