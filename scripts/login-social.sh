@@ -177,7 +177,10 @@ login)
     note "launching social-chromium for $NAME on :99 at $URL"
     # setsid + nohup + closed stdin: without all three the browser is a child of
     # this ssh session and dies with it, taking a half-finished login with it.
-    rsh "SOCIAL_PROFILE_DIR='$PROFILE' setsid nohup social-chromium '$URL' \
+    # Forward SOCIAL_WINDOW_SIZE if set, so the user can size the browser to
+    # their own screen:  SOCIAL_WINDOW_SIZE=1440,900 ./run login linkedin
+    WINSIZE="${SOCIAL_WINDOW_SIZE:-}"
+    rsh "SOCIAL_PROFILE_DIR='$PROFILE' ${WINSIZE:+SOCIAL_WINDOW_SIZE='$WINSIZE' }setsid nohup social-chromium '$URL' \
       >/tmp/social-chromium-$PLATFORM.log 2>&1 </dev/null & disown" || true
     sleep 4
     [[ -n "$(browser_pid)" ]] || die "social-chromium did not start. Look at:

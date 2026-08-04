@@ -323,8 +323,13 @@ export TZ="$${SOCIAL_TZ:-Asia/Jerusalem}"
 # --ignore-gpu-blocklist is what actually lifts the ban; the backend flags alone
 # leave it blocklisted (measured: still null without it).
 export LIBGL_ALWAYS_SOFTWARE=1
+# WINDOW SIZE. Xvfb is 1920x1080, but Chromium without a window manager opens
+# at its default window size and leaves most of the framebuffer black -- and
+# there is no WM to maximize with. Pin the window to the display so the login
+# fills the VNC window; SOCIAL_WINDOW_SIZE overrides it for smaller screens.
 ARGS=(--no-first-run --no-default-browser-check --user-data-dir="$PROFILE"
-  --ignore-gpu-blocklist --use-gl=angle --use-angle=gl)
+  --ignore-gpu-blocklist --use-gl=angle --use-angle=gl
+  --window-size="$${SOCIAL_WINDOW_SIZE:-1920,1080}")
 # This wrapper's whole reason to exist is that it never speaks CDP -- and that
 # promise was trivially breakable, because "$@" is passed straight through, so
 # `social-chromium --remote-debugging-port=9777` quietly turned it into exactly
