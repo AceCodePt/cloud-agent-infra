@@ -76,10 +76,65 @@ answered from the notification shade without opening anything.
 script to `~/.opencode/bin/opencode`, not from a package manager. Workstation is
 on `1.18.11`; the box should be pinned to the same version, not floating.
 
-**Not yet answered:** how opencode authenticates to a model provider on a
-headless box with no browser to complete an OAuth flow. `PUT /auth/:id` and
-`POST /provider/{id}/oauth/authorize` exist, so it is solvable, but nothing an
-agent does works until it is solved.
+**Provider credentials:** owner will connect providers by hand through the TUI.
+Not a blocker to design around.
+
+---
+
+## Sizing: how it is measured
+
+An earlier draft of this file asserted that 2 vCPU / 8 GB "will not hold several
+agents". That was an opinion wearing the clothes of a fact. `./run measure`
+(`scripts/measure-resources.py`) replaces it: it samples `/proc`, attributes
+memory by user and by kind, and reports peaks.
+
+**It reports PSS, not RSS, and that is the entire point.** One Unix user per
+client means several copies of the same 180 MB opencode binary, the same libc
+and the same chromium. RSS charges every shared page in full to every process
+that maps it, so sizing from RSS overestimates in exactly the direction that
+costs money. PSS divides shared pages among their sharers, so the numbers may be
+added up. `MemAvailable` is sampled alongside as an accounting-independent
+cross-check — and it agreed to within 11 MB of 1629 MB on the first run, which is
+why the numbers below are trusted at all.
+
+### Measured, 2 vCPU / 8 GB
+
+| Scenario | Peak PSS | Peak 1-min load |
+|---|---|---|
+| True idle: no browser, no agents | 492 MB | 1.75 |
+| One `opencode serve`, idle, no session | 800 MB | 0.96 |
+| Two `opencode serve`, idle | 1020 MB | 0.38 |
+| Social browser parked on the LinkedIn feed | +1168 MB | **2.50** |
+
+**First opencode server costs 308 MB; the second costs 221 MB.** The difference
+is shared pages, and it is why per-client isolation is much cheaper in memory
+than it looks. Extrapolating idle servers only, ~26 would fit in RAM.
+
+### What this changes
+
+**RAM is not the constraint. CPU is.** The earlier claim was wrong, and wrong in
+its reasoning, not just its number. At 221 MB marginal per client, memory runs
+out long after 2 vCPU does — a single browser sitting on the LinkedIn feed, doing
+nothing anyone asked for, drove the 1-minute load average to 2.50 on a 2-core
+box. Any resize should therefore buy cores, not gigabytes.
+
+**Second finding, for the secondary goal:** the social browser parked on the feed
+costs 1168 MB and more than a full core, continuously. It should not be left
+sitting on `/feed/` between reads — park it on `about:blank`, or stop it and let
+`./run login --verify` confirm the session from the cookie jar without a browser
+running at all.
+
+### Still unmeasured, and it is the number that matters
+
+Everything above is an **idle floor**. The real per-client cost is an agent
+actively working: model streaming, tool calls, a build running, and above all
+**LSP servers**, which for a large TypeScript or Rust repo can individually
+exceed every figure in that table. That measurement needs real client repos and
+connected providers.
+
+Until then the honest position is: the floor is known and small, the ceiling is
+unknown, and the first real client workload should be measured with
+`./run measure --label "client X, real task"` before a second one is added.
 
 ---
 

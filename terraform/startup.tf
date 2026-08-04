@@ -498,6 +498,44 @@ fi
 $APT install -y nodejs
 echo ">> node $(node --version), npm $(npm --version)"
 
+# Wave 2c: opencode — the agent runner, and the whole point of the machine.
+#
+# PINNED, not floating. This box is meant to run other people's work; an agent
+# runner that silently changes version underneath a client engagement is not
+# something to discover mid-task. Bump OPENCODE_VERSION below deliberately.
+# (Written without braces on purpose: a bare dollar-brace in this file is
+# interpolated by Terraform even inside a shell comment.)
+#
+# Installed from the release tarball rather than by piping the vendor script to
+# a shell. The script is fine for a laptop, but it installs into $HOME/.opencode
+# and rewrites shell rc files to extend PATH — both wrong for provisioning, and
+# neither survives the "which user is this for" question once there is one Unix
+# user per client. A single binary in /usr/local/bin is shared by every client
+# account and owned by root, so no client's agent can modify the runner itself.
+#
+# linux-x64 (not -baseline): the box reports avx2 in /proc/cpuinfo. Checked at
+# install time anyway, because machine type is a variable and a silent SIGILL
+# on a missing instruction set is a miserable way to find that out.
+OPENCODE_VERSION="1.18.11"
+if [ "$(opencode --version 2>/dev/null)" != "$OPENCODE_VERSION" ]; then
+  echo ">> wave 2c: opencode $OPENCODE_VERSION"
+  oc_target="linux-x64"
+  grep -qwi avx2 /proc/cpuinfo || oc_target="linux-x64-baseline"
+  oc_tmp="$(mktemp -d)"
+  if curl -fsSL -o "$oc_tmp/oc.tar.gz" \
+    "https://github.com/anomalyco/opencode/releases/download/v$${OPENCODE_VERSION}/opencode-$${oc_target}.tar.gz"; then
+    tar -xzf "$oc_tmp/oc.tar.gz" -C "$oc_tmp"
+    install -m 0755 -o root -g root "$oc_tmp/opencode" /usr/local/bin/opencode
+    echo ">> opencode $(/usr/local/bin/opencode --version 2>&1) ($oc_target)"
+  else
+    # Not fatal: phase B must not leave the box unusable because GitHub is down.
+    echo "!! opencode download failed; box still usable, re-run the startup script" >&2
+  fi
+  rm -rf "$oc_tmp"
+else
+  echo ">> opencode $OPENCODE_VERSION already installed"
+fi
+
 # zram compressed swap. Written AFTER the install, for the conffile reason in
 # phase A7c. apt auto-starts zramswap with a fallback size at install time, so a
 # restart (not enable --now) is what deterministically applies our sizing.

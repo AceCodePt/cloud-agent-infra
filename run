@@ -39,6 +39,13 @@ Lifecycle
                    Destroys the data disk. Use `up` unless you mean that.
   cleanup [flags]  Tear down + delete the tailnet node (--yes, --keep-bucket, --keep-files, --force)
 
+Agents
+  measure [args]   Sample the box's real resource use and report peaks, so
+                   sizing is a measurement rather than an opinion. Uses PSS (not
+                   RSS) because per-client isolation means several copies of the
+                   same binaries sharing pages. --seconds N --interval S
+                   --label X --json
+
 Social  (platform defaults to linkedin, the only one wired up)
   login [pf]       Log a social account in BY HAND, in the browser on the box,
                    over VNC through an SSH tunnel. Do this once; the profile on
@@ -121,6 +128,17 @@ rebuild)
     fi
   done
   printf '\n\033[1;32mRebuild complete and verified.\033[0m\n'
+  ;;
+
+# --- Agents ------------------------------------------------------------
+# Runs on the box, not here: sampling /proc over ssh once per interval would
+# measure the ssh connections as much as the workload.
+measure)
+  load_config
+  ssh_vm "cat > /tmp/measure-resources.py" <scripts/measure-resources.py
+  # printf %q, not $*: a --label with spaces in it otherwise arrives at the
+  # remote shell as separate words and argparse rejects it.
+  ssh_vm "sudo -n python3 /tmp/measure-resources.py $(printf '%q ' "$@")"
   ;;
 
 # --- Social ------------------------------------------------------------
