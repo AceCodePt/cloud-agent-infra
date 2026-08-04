@@ -162,94 +162,38 @@ WantedBy=multi-user.target
 UNIT
 
     # A7d. headed-chromium: a real browser on :99 with CDP + persistent profile,
-    # for agents and scrapers.
+    # for agents and scrapers. The only wrapper — an app that needs a browser
+    # tied to a logged-in account deploys its own (see decisions/browser.md).
     cat > /usr/local/bin/headed-chromium <<'CHROME'
 #!/usr/bin/env bash
 # Headed Chromium on the virtual display, for agents + scrapers.
-#   DISPLAY             default :99 (the Xvfb screen)
-#   BROWSER_PROFILE_DIR default /mnt/data/browser/default (survives rebuilds)
-#   CDP_PORT            default 9222 (use a different port per agent/browser)
+#   DISPLAY              default :99 (the Xvfb screen)
+#   BROWSER_PROFILE_DIR  default /mnt/data/browser/default (survives rebuilds)
+#   CDP_PORT             default 9222 (use a different port per agent/browser)
+#   BROWSER_WINDOW_SIZE  default 1920,1080 (the whole framebuffer)
 # AutomationControlled is disabled so navigator.webdriver stays false.
 export DISPLAY="$${DISPLAY:-:99}"
 # Software WebGL: without it getContext('webgl') returns null on this GPU-less
-# box, silently breaking any app under test that touches WebGL.
+# box, silently breaking any app under test that touches WebGL. ANGLE is routed
+# at Mesa/llvmpipe, not SwiftShader — see decisions/browser.md.
 export LIBGL_ALWAYS_SOFTWARE=1
+# WINDOW SIZE: Xvfb is 1920x1080 but Chromium without a WM opens at its default
+# size, leaving most of the framebuffer black — which is what you actually see
+# over VNC. Pin the window to the display.
 exec chromium --no-first-run --no-default-browser-check \
   --disable-blink-features=AutomationControlled \
   --ignore-gpu-blocklist --use-gl=angle --use-angle=gl \
+  --window-size="$${BROWSER_WINDOW_SIZE:-1920,1080}" \
   --remote-debugging-port="$${CDP_PORT:-9222}" \
   --user-data-dir="$${BROWSER_PROFILE_DIR:-/mnt/data/browser/default}" \
   "$@"
 CHROME
     chmod +x /usr/local/bin/headed-chromium
 
-    # A7e. social-chromium: the browser for LOGGED-IN social accounts. Same
-    # codebase as headed-chromium but deliberately different: NO CDP AT ALL
-    # (Runtime.enable is the clearest automation marker there is). No
-    # fingerprint flags either — coherence beats invisibility. This wrapper is
-    # infra; WHAT runs in it (the extension/controller for a real account) is
-    # owned by AceCodePt/linkedin-reader. Extensions load from a directory that
-    # repo deploys; Terraform provisions the machine, not the app.
-    cat > /usr/local/bin/social-chromium <<'SOCIAL'
-#!/usr/bin/env bash
-# Real headful Chromium for authenticated social sessions.
-#   DISPLAY            default :99
-#   SOCIAL_PROFILE_DIR default /mnt/data/browser/social-linkedin  (cookies
-#                      harvested from a normal profile last weeks, from a
-#                      fresh/incognito context about an hour)
-#   EXT_DIR            default /mnt/data/app/extension   (our private, unlisted
-#                      extension; its ID is not in LinkedIn's scan list)
-set -euo pipefail
-export DISPLAY="$${DISPLAY:-:99}"
-PROFILE="$${SOCIAL_PROFILE_DIR:-/mnt/data/browser/social-linkedin}"
-EXT="$${EXT_DIR:-/mnt/data/app/extension}"
-
-# TIMEZONE: the box runs UTC — right for a server, wrong for a browser claiming
-# to be this account. Measured: LinkedIn stored `timezone=UTC` against an
-# account whose history is Israeli. Set per-browser, not with timedatectl, so
-# system logs stay UTC.
-export TZ="$${SOCIAL_TZ:-Asia/Jerusalem}"
-
-# WEBGL: measured — getContext('webgl') returned null, because Chrome 136+
-# refuses software WebGL unless told otherwise and this box has no GPU. Routing
-# ANGLE at Mesa (llvmpipe) reports what a real GPU-less Linux desktop reports,
-# unlike --enable-unsafe-swiftshader ("SwiftShader" = headless Chrome's calling
-# card). --ignore-gpu-blocklist is what actually lifts the ban.
-export LIBGL_ALWAYS_SOFTWARE=1
-# WINDOW SIZE: Xvfb is 1920x1080 but Chromium without a WM opens at its default
-# size, leaving most of the framebuffer black. Pin the window to the display.
-ARGS=(--no-first-run --no-default-browser-check --user-data-dir="$PROFILE"
-  --ignore-gpu-blocklist --use-gl=angle --use-angle=gl
-  --window-size="$${SOCIAL_WINDOW_SIZE:-1920,1080}")
-# This wrapper exists to never speak CDP — and "$@" made that trivially
-# breakable (`social-chromium --remote-debugging-port=9777`). Refuse unless
-# deliberately opted in for a throwaway measurement profile.
-for arg in "$@"; do
-  case "$arg" in
-  --remote-debugging-*)
-    if [ "$${ALLOW_CDP:-}" != "1" ]; then
-      echo "social-chromium: refusing $arg -- this browser must not expose CDP." >&2
-      echo "  For a throwaway measurement profile only: ALLOW_CDP=1 social-chromium ..." >&2
-      exit 64
-    fi
-    echo "social-chromium: WARNING -- CDP enabled via ALLOW_CDP on $PROFILE" >&2
-    ;;
-  esac
-done
-
-if [ -f "$EXT/manifest.json" ]; then
-  ARGS+=(--disable-extensions-except="$EXT" --load-extension="$EXT")
-else
-  echo "social-chromium: no extension at $EXT (run: ./run deploy)" >&2
-fi
-exec chromium "$${ARGS[@]}" "$@"
-SOCIAL
-    chmod +x /usr/local/bin/social-chromium
-
-    # A7f. Agent-writable profile root + deployed app dir on the data disk
+    # A7e. Agent-writable profile root + deployed app dir on the data disk
     # (/mnt/data is root-owned; agents run as your user and create their own
-    # subdirs). Only browser/ parent is created — profiles are per-platform and
-    # Chromium creates its own --user-data-dir.
+    # subdirs). Only browser/ parent is created — Chromium creates its own
+    # --user-data-dir.
     mkdir -p "$DATA_MNT/browser" "$DATA_MNT/app"
     chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
 

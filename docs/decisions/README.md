@@ -42,22 +42,23 @@ the premise is unevidenced".
 | Right-sizing the box | Parked |
 | Provider migration | Parked |
 
-### [browser-and-social.md](browser-and-social.md) — the box's shared browser
+### [browser.md](browser.md) — the browser on the box
 
 | Decision | Status |
 |---|---|
-| Two browsers split by purpose; the social one never speaks CDP | Made |
+| One wrapper (`headed-chromium`); the app brings its own if it has an account | Made |
 | Headful Chromium on Xvfb, no window manager | Made |
-| Coherence over invisibility (real TZ, real-looking WebGL, no spoof flags) | Made |
+| Software WebGL routed at Mesa, not SwiftShader | Made |
+| No fingerprint-spoofing flags | Made |
+| Openbox | Rejected |
 | Thorium instead of Debian's Chromium | Rejected |
-| Block media via CDP to save bandwidth | Superseded |
+| Block media to save bandwidth | Superseded |
 
-Everything about the logged-in social account — the extension/controller
-architecture, how logins happen, the reader's read constraints, the ToS
-exposure — lives with the app that owns it:
-[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader)
-(`docs/decisions/browser-and-social.md` there). This repo only builds the box
-the browser runs on.
+Anything tied to a **logged-in account** — a real session, the extension and
+controller that drive it, fingerprint coherence for one identity, the ToS
+exposure — belongs to the app that owns the account, not here. See
+[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader).
+This repo only builds the box the browser runs on.
 
 ### [agents-and-sizing.md](agents-and-sizing.md) — the agent runner and how the box is sized
 
@@ -74,7 +75,7 @@ the browser runs on.
 | Isolation model: Unix user per client | Made |
 | Browser testing: one shared browser, or served over the tailnet from outside | Made |
 | Phone approval loop | Open |
-| Build goal 2 before touching infrastructure | Superseded |
+| Build the LinkedIn reader before touching infrastructure | Superseded |
 
 ### [history.md](history.md) — superseded architecture
 

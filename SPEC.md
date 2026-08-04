@@ -24,6 +24,12 @@ and it lives in its own repo:
 
 ## Goals
 
+Numbered in the order they were first stated, which is NOT their priority.
+**Goals 2 and 3 are absent on purpose** — they were the LinkedIn reader and its
+Meta extension, and they now live in
+[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader). The
+numbering is kept because `docs/decisions/` refers to it.
+
 | # | Goal | Priority | State |
 |---|---|---|---|
 | 4 | Agentic workflows for client companies: multiple agents, isolated per client, with agent-driven browser testing | **PRIMARY — the reason the machine exists** | Runner installed and measured; **isolation + concurrency decided (Unix user per client, 5–10 clients), no per-client accounts built yet** |
@@ -59,9 +65,10 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
 - CLI: `git`, `stow`, `tmux`, `neovim`, `python3-pip`, `build-essential`
 - Node.js 24 from the NodeSource apt repo
 - **opencode, pinned to `1.18.11`**, one root-owned binary in `/usr/local/bin`
-- Xvfb `:99` + Chromium, two wrappers: `headed-chromium` (CDP, for testing our
-  own apps) and `social-chromium` (never CDP, for logged-in accounts)
-- `x11vnc`, installed but not enabled — started by hand for a one-time login
+- Xvfb `:99` + Chromium with one wrapper, `headed-chromium` (CDP, persistent
+  profile). An app that needs a browser tied to a logged-in account deploys its
+  own wrapper — this repo knows nothing about accounts.
+- `x11vnc`, installed but not enabled — started by hand via `./run browser`
 - zram compressed swap
 
 ## What does not exist
@@ -112,7 +119,7 @@ is not halt.
 
 This project has drifted before: a session that began with a revoked Tailscale
 key ended up planning a provider migration, via zram, Thorium, Openbox and hosted
-CDP, while goals 2–4 stayed at zero lines. Three recommendations were reversed
-inside twenty minutes because each was made against a locally-scoped question
-rather than a stated goal. Hence the priority column above, `TASK.md`'s ordering
-rule, and `docs/decisions/` holding a single answer per question.
+CDP, while the primary goal stayed at zero lines. Three recommendations were
+reversed inside twenty minutes because each was made against a locally-scoped
+question rather than a stated goal. Hence the priority column above, `TASK.md`'s
+ordering rule, and `docs/decisions/` holding a single answer per question.

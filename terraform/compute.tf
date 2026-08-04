@@ -46,7 +46,7 @@ resource "google_compute_instance" "agent" {
     # Deliberately NOT reserved/static, though GCP does hand out a new address on
     # every stop/start (measured: 34.165.106.36 -> 34.165.192.90 across one
     # pause). A static IP was tried and reverted: the premise was that a moving
-    # address would trip account-security checks on a logged-in social session,
+    # address would trip account-security checks on a logged-in session,
     # and that premise does not survive contact with how people actually use
     # these services. Phones roam between home wifi, mobile data and café APs all
     # day; if a changed IP were weighted heavily, the mobile apps would be

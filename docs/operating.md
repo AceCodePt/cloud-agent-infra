@@ -182,46 +182,49 @@ needs it; a spent key on an already-joined node is expected and only warns.
 
 ---
 
-## Browsers: the box's shared browser, and how to look at it
+## The browser: one wrapper, on a virtual display
 
 Agents get a **real browser** — many sites block `HeadlessChrome`, so the box
 runs Chromium *headed* on a virtual display: **Xvfb** provides a 1920×1080 screen
 (`DISPLAY :99`, pre-set in every login shell and tmux) and Chromium renders into
 it like a normal browser. No desktop or window manager.
 
-There are two wrappers — using the wrong one is the one mistake here with a
-lasting cost:
+There is exactly one wrapper, `headed-chromium`:
 
-| | `headed-chromium` | `social-chromium` |
-|---|---|---|
-| For | testing **our own** apps | a **real account** that is logged in |
-| CDP | yes, `CDP_PORT` (default 9222) | **never** — refuses, exit 64 |
-| Profile | `/mnt/data/browser/default` | `/mnt/data/browser/social-<platform>` |
-| Control | Playwright / CDP | by hand (the linkedin-reader repo owns this) |
+| | `headed-chromium` |
+|---|---|
+| For | agent browser testing against **our own** apps |
+| CDP | yes, `CDP_PORT` (default 9222) |
+| Profile | `BROWSER_PROFILE_DIR`, default `/mnt/data/browser/default` |
 
 ```sh
 headed-chromium https://example.com                     # test browser
 BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 CDP_PORT=9223 headed-chromium
-./run browser                                           # hand-drive the box's browser over VNC
+./run browser                                           # hand-drive it over VNC
 ./run browser --stop                                    # stop it (SIGTERM, flushes cookies)
 ```
 
 - Playwright: `chromium.launch(headless=False, executable_path="/usr/bin/chromium")`,
   or attach: `chromium.connect_over_cdp("http://localhost:9222")`.
-- Logged-in sessions survive rebuilds (profiles live on the data disk).
-- Each headed Chromium costs ~530 MB (measured); a browser sitting on a busy feed
+- Profiles live on the data disk, so anything logged in survives a rebuild.
+- Each headed Chromium costs ~530 MB (measured); a browser sitting on a busy page
   also costs about a full core, so park it on `about:blank` or stop it.
-- `social-chromium` deliberately has no fingerprint-spoofing flags. Coherence
-  beats invisibility. Reasoning:
-  [`decisions/browser-and-social.md`](decisions/browser-and-social.md).
+- Give each agent its own `BROWSER_PROFILE_DIR` and `CDP_PORT` — one profile
+  shared between identities means one cookie jar and one fingerprint for both.
+
+**An app with a logged-in account brings its own wrapper.** This repo knows
+nothing about accounts: no timezone pinned to someone's history, no extension
+loading, no CDP refusal. That belongs to whichever app owns the session — e.g.
+[`linkedin-reader`](https://github.com/AceCodePt/linkedin-reader) deploys its own
+`social-chromium`. Reasoning: [`decisions/browser.md`](decisions/browser.md).
 
 ### Reaching the display by hand: `./run browser`
 
 `./run browser [url]` does the whole thing: starts `x11vnc` on the box (loopback
-only), launches the shared browser (`headed-chromium` by default) on `:99`, opens
-an SSH tunnel `localhost:5900 → box:5900`, and opens your local VNC client. You
-drive whatever is in the browser by hand, including a one-time login; on exit the
-tunnel closes and `x11vnc` stops.
+only), launches `headed-chromium` on `:99`, opens an SSH tunnel
+`localhost:5900 → box:5900`, and opens your local VNC client. You drive whatever
+is in the browser by hand, including a one-time login; on exit the tunnel closes
+and `x11vnc` stops.
 
 ```sh
 ./run browser                       # needs a VNC client locally, e.g. tigervnc
@@ -231,8 +234,8 @@ BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 ./run browser   # a different profi
 BROWSER_WINDOW_SIZE=1440,900 ./run browser   # size it to your screen
 ```
 
-`BROWSER_CMD` swaps the wrapper (e.g. `BROWSER_CMD=social-chromium`); whatever
-`social-chromium` runs against is owned by the linkedin-reader repo, not this one.
+`BROWSER_CMD` swaps the wrapper, so an app that deployed its own can be driven
+through the same tunnel (`BROWSER_CMD=social-chromium ./run browser`).
 
 ---
 

@@ -78,16 +78,15 @@ Measured, and it inverts the earlier assumption:
 
 - marginal cost of another idle opencode server: **221 MB** (the first costs 308)
 - a *working* client with an LSP: **~1000 MB**
-- one active agent drove 1-minute load to **3.60 on 2 vCPU**; a social browser
-  merely parked on the LinkedIn feed drove it to 2.50
+- one active agent drove 1-minute load to **3.60 on 2 vCPU**; a headed browser
+  merely parked on a busy feed drove it to 2.50
 
 So RAM fits roughly six working clients while the CPU saturates at about **two
 actively-working agents**. Any resize buys cores, not gigabytes.
 
-Second-order consequence for the social reader (owned by the linkedin-reader
-repo): do not leave the social browser sitting on `/feed/` between reads. Park it
-on `about:blank`, or stop it and read the cookie jar with no browser running at
-all.
+Second-order consequence for any app that reads a feed: do not leave the browser
+sitting on it between reads. Park it on `about:blank`, or stop it — a cookie jar
+can be read with no browser running at all.
 
 ## Overload is graceful, not a halt — **Made**
 
@@ -194,13 +193,14 @@ Not started. Stays in `TASK.md`; the endpoints it needs are already enumerated
 above (`/event` SSE + `/session/:id/permissions/:permissionID`), so it is an
 integration task, not a design one.
 
-## Build goal 2 before touching infrastructure — **Superseded**
+## Build the LinkedIn reader before touching infrastructure — **Superseded**
 
 Was justified as "narrowest goal, substrate already verified, produces the
-measurements the other goals need". It has been overtaken: goal 4 is the primary
-goal, and effort has repeatedly followed whatever was most concrete and
-measurable rather than what mattered most. Ordering now comes from the priority
-column in `SPEC.md`, not from tractability.
+measurements the other goals need". It has been overtaken: the reader moved to
+its own repo (`AceCodePt/linkedin-reader`), goal 4 is the primary goal, and
+effort has repeatedly followed whatever was most concrete and measurable rather
+than what mattered most. Ordering now comes from the priority column in
+`SPEC.md`, not from tractability.
 
 ## Token spend probably dwarfs the VM — **Made** (as a rule for future decisions)
 

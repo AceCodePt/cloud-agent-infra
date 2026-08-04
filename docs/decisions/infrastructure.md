@@ -124,16 +124,16 @@ against roughly $10/mo for comparable Hetzner hardware — but:
   16 GB ~$1,353/yr.
 
 Two arguments that used to appear here are void: "Hetzner IPs are blocked by bot
-protection" (the box's own egress is what social traffic uses, on any provider —
-see browser-and-social.md) and "Hetzner bills powered-off servers while a stopped
+protection" (the box's own egress is what any app's traffic uses, on any
+provider) and "Hetzner bills powered-off servers while a stopped
 GCP instance bills disks only" (that only matters if something polls 24/7, and
-nothing does — see "no scheduled poller").
+nothing does).
 
 ## Static external IP — **Reversed**
 
 Reserved, then released. The premise was that the ephemeral IP changing on every
 pause (measured `34.165.106.36` → `34.165.192.90`) would trip account-security
-checks on a logged-in social session.
+checks on a logged-in session belonging to an app on the box.
 
 That premise does not survive contact with normal usage: phones roam between home
 wifi, mobile data and café APs all day, so a changed IP cannot be weighted
@@ -144,8 +144,8 @@ Revisit only if an actual account challenge appears.
 
 ## Right-sizing the box — **Parked**
 
-The box is `e2-standard-2` (2 vCPU / 8 GB) because of an abandoned plan, and the
-social browser peaks at ~530 MB — but measurement says the box is **CPU**-bound,
+The box is `e2-standard-2` (2 vCPU / 8 GB) because of an abandoned plan, and a
+headed browser peaks at ~530 MB — but measurement says the box is **CPU**-bound,
 not RAM-bound, and goal 4 may need more of both. Do not resize until goal 4 is
 specified; when it is, buy cores.
 

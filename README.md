@@ -30,9 +30,7 @@ configuration shared between the bootstrap script and Terraform.
 │   • tailscaled (systemd) -> joins tailnet as "cloud-agent"  │
 │   • Tailscale SSH: `ssh <user>@cloud-agent` lands here      │
 │   • opencode (pinned) + Node 24 — the agent runner, one user per client
-│   • Xvfb :99 + two Chromium wrappers:                       │
-│       headed-chromium  CDP, for testing our own apps        │
-│       social-chromium  no CDP ever, for logged-in accounts  │
+│   • Xvfb :99 + headed-chromium (CDP, persistent profile)    │
 │   • x11vnc, loopback only, started by hand (`./run browser`)│
 │   • Persistent data disk mounted at /mnt/data               │
 │     (writable root — no COS quirks)                         │
@@ -66,7 +64,7 @@ The full command surface, every script, and the flows they compose are mapped in
 ## Repository layout
 
 ```
-cloud-agent-infra/
+multi-agent-infra/
 ├── README.md             # this file: the front door
 ├── SPEC.md               # goals, what exists, open questions
 ├── TASK.md               # open work

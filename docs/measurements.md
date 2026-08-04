@@ -64,15 +64,15 @@ reaches for swap.
 | True idle: no browser, no agents | 492 MB | 1.75 |
 | One `opencode serve`, idle, no session | 800 MB | 0.96 |
 | Two `opencode serve`, idle | 1020 MB | 0.38 |
-| Social browser parked on the LinkedIn feed | +1168 MB | **2.50** |
+| Headed browser parked on a busy feed | +1168 MB | **2.50** |
 
 **First opencode server costs 308 MB; the second costs 221 MB** — the difference
 is shared pages, which is why per-client isolation is much cheaper in memory than
 it looks. `MemAvailable` agreed with the PSS accounting to within 11 MB of
 1629 MB on the first run, which is why these numbers are trusted at all.
 
-Note the last row: a browser sitting on the feed, doing nothing anyone asked for,
-costs 1168 MB and more than a full core continuously.
+Note the last row: a browser sitting on a busy page, doing nothing anyone asked
+for, costs 1168 MB and more than a full core continuously.
 
 ## Sizing: the language server dominates
 
@@ -189,20 +189,14 @@ ramp when a new client type arrives.
 ## Fingerprint
 
 CreepJS, measured: headful Chromium under Xvfb with `xauth` scores **0%/44%** —
-identical to real headed Chrome on a desktop. Headless scores 67%/50%.
+identical to real headed Chrome on a desktop. Headless scores 67%/50%. That is
+the reason the box runs a headed browser on a virtual display at all.
 
-Two defects found after the first real login, both properties of the browser
-(always sent, verifiable by the site) and therefore outranking the IP question
-earlier sessions spent so long on:
+One defect found here was a property of the **box**, always sent and verifiable
+by any site, and therefore outranking the IP question earlier sessions spent so
+long on:
 
-**1. Timezone said UTC.** Not inferred: LinkedIn read the clock and stored
-`timezone=UTC` in a cookie against an account whose entire history is Israeli.
-Fixed with `TZ` in the `social-chromium` wrapper only. Confirmed end to end —
-`Intl.DateTimeFormat().resolvedOptions().timeZone` → `Asia/Jerusalem`,
-`getTimezoneOffset()` → `-180`, and LinkedIn rewrote its own cookie to
-`timezone=Asia/Jerusalem` on the next page load.
-
-**2. WebGL did not exist.** `getContext('webgl')` → `null`, log line
+**WebGL did not exist.** `getContext('webgl')` → `null`, log line
 `ContextResult::kFatalFailure: WebGL1 blocklisted`. Chrome 136+ refuses software
 WebGL unless told otherwise and this box has no GPU. Three options, measured:
 
@@ -214,22 +208,26 @@ WebGL unless told otherwise and this box has no GPU. Three options, measured:
 
 `--ignore-gpu-blocklist` is the flag that actually lifts the ban; the backend
 flags alone still measured `null`. llvmpipe also reports `MAX_TEXTURE_SIZE` 16384
-against SwiftShader's 8192, and WebGL2 works.
+against SwiftShader's 8192, and WebGL2 works. Both the flags and
+`libgl1-mesa-dri` are in `headed-chromium` and phase B for this reason.
 
 Other environment facts, readable by any page's client-side telemetry:
 
 - `document.hasFocus()` → `false` while `visibilityState` → `visible`
 - no `_NET_SUPPORTING_WM_CHECK` (no window manager, deliberately)
 - window size: Chromium with no WM opened at `945x917 +10,+10` on a 1920×1080
-  framebuffer; `social-chromium` now pins `--window-size` to the display
+  framebuffer; `headed-chromium` now pins `--window-size` to the display
+  (`BROWSER_WINDOW_SIZE`)
 - H.264 `probably`, AAC `probably`; UA `Chrome/151.0.0.0`
 - Chromium `151.0.7922.71` (Debian bookworm)
 - `hardwareConcurrency` 2, where a real desktop is usually 4–16 — only fixable by
   paying for a bigger machine type
 
-Session cookie: `li_at` from the persistent profile was issued with a **364-day
-expiry**, against roughly an hour for one lifted from a fresh or incognito
-context.
+**Anything tied to a specific account is not measured here.** A second defect —
+the box's UTC clock being wrong for a browser claiming a particular identity, and
+what a persistent profile's session cookie is worth — is a property of the app
+that owns the account, and lives with it in
+[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader).
 
 ## Measurement traps worth remembering
 
