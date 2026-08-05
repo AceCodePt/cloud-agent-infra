@@ -1,17 +1,4 @@
 #!/usr/bin/env bash
-#
-# run — the operational entry point.
-#
-# A dispatcher rather than a Makefile: it sources scripts/lib.sh, so config
-# loading, the terraform wrapper and the ssh helpers have exactly one definition
-# in this repo. Arguments pass straight through (./run verify --quick), and there
-# is no second layer of $-escaping to get wrong.
-#
-#   ./run                 list the commands
-#   ./run up              converge to the verified good state (the one to use)
-#   ./run rebuild         full cycle from nothing, destroying the data disk
-#   ./run <cmd> [args]    everything else
-#
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/scripts/lib.sh"
@@ -89,11 +76,8 @@ cmd="${1:-help}"
 case "$cmd" in
 help | -h | --help) usage ;;
 
-# The one command. Everything below it is a step `up` already runs in order, kept
-# individually callable for when you want just that step.
 up) scripts/up.sh "$@" ;;
 
-# --- Lifecycle ---------------------------------------------------------
 bootstrap) scripts/bootstrap.sh "$@" ;;
 plan)
   load_config
@@ -101,9 +85,6 @@ plan)
   ;;
 apply)
   load_config
-  # A dead auth key is invisible until the VM has booted and silently failed to
-  # join the tailnet — at which point it is unreachable by design. Catch it here,
-  # while it still costs nothing.
   scripts/tailscale-api.sh check
   tf apply "$@"
   ;;
@@ -113,8 +94,6 @@ verify) scripts/verify.sh "$@" ;;
 verify-browser) scripts/verify-browser.sh "$@" ;;
 cleanup) scripts/cleanup.sh "$@" ;;
 
-# The one command that matters. set -e stops at the first failing step, so a
-# broken build never silently proceeds to "verified".
 rebuild)
   for step in \
     "scripts/cleanup.sh" \
@@ -135,14 +114,9 @@ rebuild)
   printf '\n\033[1;32mRebuild complete and verified.\033[0m\n'
   ;;
 
-# --- Agents ------------------------------------------------------------
-# Runs on the box, not here: sampling /proc over ssh once per interval would
-# measure the ssh connections as much as the workload.
 measure)
   load_config
   ssh_vm "cat > /tmp/measure-resources.py" <scripts/measure-resources.py
-  # printf %q, not $*: a --label with spaces in it otherwise arrives at the
-  # remote shell as separate words and argparse rejects it.
   ssh_vm "sudo -n python3 /tmp/measure-resources.py $(printf '%q ' "$@")"
   ;;
 
@@ -152,21 +126,16 @@ lsp-probe)
   ssh_vm "node /tmp/lsp-probe.mjs $(printf '%q ' "$@")"
   ;;
 
-# --- Browser ----------------------------------------------------------
 browser) scripts/browser.sh "$@" ;;
 
-# --- Tailscale ---------------------------------------------------------
 mint-key) scripts/tailscale-api.sh mint ;;
 check-key) scripts/tailscale-api.sh check ;;
 rekey) scripts/rekey.sh "$@" ;;
 list-nodes) scripts/tailscale-api.sh list ;;
 delete-node) scripts/tailscale-api.sh delete-node "$@" ;;
 
-# --- Misc --------------------------------------------------------------
 ssh)
   load_config
-  # Deliberately NOT ssh_vm: that sets BatchMode=yes, which suppresses the
-  # interactive prompts (and Tailscale's check-mode URL) you need here.
   ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$INSTANCE" "$@"
   ;;
 tf)
@@ -177,12 +146,6 @@ fmt) tf fmt ;;
 validate)
   load_config
   tf fmt -check
-  # `terraform validate` needs the provider schemas, which live in .terraform.
-  # On a clean checkout — or after a cleanup wiped it — that directory is absent
-  # and validate fails with "no package ... cached" rather than telling you
-  # anything about the configuration. `-backend=false` fetches the providers
-  # without touching (or requiring) the GCS backend, so validate stays a purely
-  # local, side-effect-free check that works before any infrastructure exists.
   [[ -d "$TF_DIR/.terraform" ]] || tf init -backend=false -input=false >/dev/null
   tf validate
   for f in scripts/*.sh run; do bash -n "$f" || die "$f does not parse"; done

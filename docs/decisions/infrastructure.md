@@ -159,7 +159,7 @@ Blocked on two things: goal 4's real sizing (see
 
 **Break-glass is the honest counterweight to the $1,353/yr.** GCP's IAP tunnel is
 the only non-Tailscale way into a box with zero public ingress. Hetzner has no
-equivalent, and our own hardening closes the alternatives — `verify.sh:209-211`
+equivalent, and our own hardening closes the alternatives — `verify.sh:138-140`
 asserts the account password is locked and root login is off, which shuts the VNC
 console. Combined with the loss of a programmatic serial console, a Hetzner box
 that boots but fails `tailscale up` would be **unreachable and unobservable

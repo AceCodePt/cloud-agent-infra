@@ -1,5 +1,4 @@
 #!/bin/bash
-# Setup: fresh opencode server on the TS repo, create a session, print its ID.
 set -euo pipefail
 pkill -f "[o]pencode serve" 2>/dev/null || true
 sleep 2

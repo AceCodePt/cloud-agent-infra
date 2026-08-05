@@ -1,5 +1,3 @@
-# versions.tf — provider requirements and provider configuration.
-
 terraform {
   required_providers {
     google = {

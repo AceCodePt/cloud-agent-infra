@@ -1,7 +1,4 @@
 #!/bin/bash
-# Realistic stress: one opencode server PER client (the actual per-client
-# isolation design), each with its own session and its own tsgo LSP, all
-# reading the same shared repo. This is the honest per-client memory number.
 set -uo pipefail
 K=$1
 ROUNDS=$2
@@ -44,7 +41,6 @@ echo "all $K servers up with sessions"
 /usr/bin/python3 /tmp/measure-resources.py --seconds 900 --interval 2 --label "$LABEL" > /tmp/measure.out 2>&1 &
 SAMP_PID=$!
 
-# Drive each server's session once, concurrently.
 cat > /tmp/multi-drive.mjs <<'EOF'
 import { request } from "node:http";
 import { readFileSync } from "node:fs";

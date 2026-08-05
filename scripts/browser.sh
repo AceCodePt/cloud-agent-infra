@@ -1,30 +1,8 @@
 #!/usr/bin/env bash
-#
-# browser.sh — reach the box's virtual display and drive a browser in it, BY
-# HAND, over VNC through an SSH tunnel.
-#
-#   ./run browser [url]      open the shared browser on the box, tunnel VNC
-#                            into it, and hand you a window on the :99 screen
-#   ./run browser --stop     stop the browser (SIGTERM) and x11vnc
-#
-# This is the box's shared browser: `headed-chromium` on the virtual display,
-# one persistent profile. The browser is infra; WHAT runs in it (a login, an
-# app under test, an agent's UI) is up to whoever called this.
-#
-# Why over VNC on the box, not locally: the box's browser is the one with the
-# profile, the egress, and the display — copying a session out of it is exactly
-# the mistake this command exists to avoid.
-#
-# CHAIN (no window manager; the browser IS the whole 1920x1080 screen):
-#
-#   VNC client -> localhost:5900 -> ssh tunnel -> box 127.0.0.1:5900
-#             -> x11vnc -> Xvfb :99 (1920x1080x24) -> headed-chromium
-#
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# Arguments.
 MODE=open
 URL="about:blank"
 for a in "$@"; do
@@ -41,32 +19,21 @@ PORT="${VNC_LOCAL_PORT:-5900}"
 
 load_config
 
-# Remote helper. The PATH fix-up: ss/systemctl live in /usr/sbin, which is NOT
-# on the PATH of a non-interactive ssh command — the same trap that once made
-# this repo conclude the box had no swap.
 rsh() { ssh_vm "export PATH=/usr/local/sbin:/usr/sbin:/sbin:\$PATH; $1"; }
 
-# The [u] is not a typo: `pgrep -f` matches every process's full command line,
-# including the shell ssh spawned to run THIS command — a plain pattern would
-# report the browser running when it isn't. (Measured: 2 false positives.)
 browser_pid() { rsh "pgrep -f '[u]ser-data-dir=$PROFILE' | head -1" 2>/dev/null | tr -d '[:space:]'; }
 
 stop_vnc() {
   note "stopping x11vnc on the box"
-  # reset-failed too: x11vnc traps SIGTERM and exits 2, so an ordinary stop is
-  # recorded as a failure and the unit stays failed forever (SuccessExitStatus=2
-  # fixes new boxes; a bogus --failed entry is how real failures get ignored).
   rsh "sudo -n systemctl stop x11vnc; sudo -n systemctl reset-failed x11vnc" 2>/dev/null || true
 }
 
 case "$MODE" in
-# stop
 stop)
   stop_vnc
   pid="$(browser_pid)"
   if [[ -n "$pid" ]]; then
     note "stopping browser (pid $pid)"
-    # SIGTERM, never -9: Chromium must flush Cookies and Local State to disk.
     rsh "kill $pid" || true
     sleep 3
   else
@@ -76,14 +43,7 @@ stop)
   exit 0
   ;;
 
-# open
 open)
-  # Viewer preference depends on the session. Under Wayland, prefer a client that
-  # speaks Wayland natively: an X11-only viewer needs XWayland, whose socket in
-  # /tmp/.X11-unix is routinely destroyed by tmp cleaners while the Xwayland
-  # process keeps running — the socket stays bound in the kernel but unreachable,
-  # so every X11 client dies with "Can't open display". Measured that exact
-  # failure; it reads like a bug in this script and is not one.
   if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
     CANDIDATES=(wlvncc gvncviewer remmina vinagre vncviewer)
   else
@@ -102,9 +62,6 @@ open)
   then re-run: ./run browser $URL"
   note "using VNC client: $viewer"
 
-  # An X11-only viewer with an unreachable DISPLAY fails instantly and
-  # unhelpfully. Catch it here, before starting x11vnc and a tunnel that then
-  # have to be torn down.
   if [[ "$viewer" == vncviewer || "$viewer" == vinagre ]]; then
     [[ -n "${DISPLAY:-}" ]] || die "$viewer is an X11 client but DISPLAY is unset.
   On Wayland, install a native client:  sudo pacman -S remmina"
@@ -131,7 +88,7 @@ open)
   fi
 
   trap stop_vnc EXIT INT TERM
-  note "starting x11vnc on the box (loopback only, no password -- see comments)"
+  note "starting x11vnc on the box (loopback only, no password -- see operating.md)"
   rsh "sudo -n systemctl start x11vnc"
 
   pid="$(browser_pid)"
@@ -139,9 +96,6 @@ open)
     note "browser already running (pid $pid) -- reusing it"
   else
     note "launching $BROWSER_CMD on :99 at $URL"
-    # setsid + nohup + closed stdin: without all three the browser is a child of
-    # this ssh session and dies with it. BROWSER_WINDOW_SIZE (optional) sizes
-    # the browser to the user's own screen.
     WINSIZE="${BROWSER_WINDOW_SIZE:-}"
     rsh "BROWSER_PROFILE_DIR='$PROFILE' ${WINSIZE:+BROWSER_WINDOW_SIZE='$WINSIZE' }setsid nohup $BROWSER_CMD '$URL' \
       >/tmp/browser-$BROWSER_CMD.log 2>&1 </dev/null & disown" || true
@@ -164,9 +118,6 @@ open)
     sleep 1
   done
 
-  # The escape hatch has to be on screen BEFORE the viewer launches. The viewer
-  # fills the screen (on a tiling WM it may also open on another workspace), so
-  # "Ctrl-C here" is useless advice once you cannot find "here" any more.
   case "$viewer" in
   vncviewer) ESCAPE="press F8 for the TigerVNC menu (Exit viewer)" ;;
   *) ESCAPE="close the $viewer window" ;;
@@ -190,9 +141,6 @@ EOF
   echo
 
   note "starting $viewer"
-  # Do NOT swallow the exit status: a viewer that dies on startup used to look
-  # identical to a session the user closed normally — the script just cleaned up
-  # and said nothing.
   rc=0
   case "$viewer" in
   vncviewer) "$viewer" -Shared "localhost:$PORT" || rc=$? ;;

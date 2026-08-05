@@ -1,5 +1,4 @@
 #!/bin/bash
-# Run a long agent workload on the box in the background, logging to /tmp/agent-run.log.
 set -euo pipefail
 SID=$1
 REPEAT=$2

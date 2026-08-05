@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-#
-# wait-ready.sh — block until a freshly applied VM is actually usable.
-#
-# "apply finished" is not "ready": the notify keypair is generated near the end
-# of the startup script, so running provision-phone.sh or verify.sh before that
-# produces confusing failures. Ready means: node online in the tailnet AND the
-# startup script logged its completion line (~40-60s on a cold boot, since
-# startup.tf defers the ~200MB browser stack to agent-packages.service).
-#
-# Phase B is NOT waited for by default — deferring it is the point; --packages
-# blocks on it for when you want the fully-provisioned machine.
-#
-# Usage: ./scripts/wait-ready.sh [timeout-seconds] [--packages]  (default 600)
-#
 set -uo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -57,16 +43,9 @@ while :; do
     fi
   fi
 
-  # One serial-port read per iteration, reused below. Phase B runs as a systemd
-  # unit, so its output reaches the journal and therefore the serial console —
-  # which is why this can watch it without needing SSH.
   SERIAL="$(gcloud_instance get-serial-port-output 2>/dev/null || true)"
 
   if ! $complete; then
-    # Two independent signals, because neither alone is trustworthy: the SENTINEL
-    # FILE is authoritative but needs SSH (needs the tailnet); the SERIAL CONSOLE
-    # needs no SSH but can silently DROP the final line (stdout is an unflushed
-    # tee) — relying on it alone turned an 84s boot into a 10-minute timeout.
     if $joined && ssh_vm test -f /run/agent-startup-complete 2>/dev/null; then
       complete=true
       note "startup script completed (${elapsed}s, sentinel file)"
@@ -84,8 +63,6 @@ while :; do
       warn "the deferred package install FAILED. The box is reachable, but the
   browser stack is not installed. Diagnose with:
     ./run ssh journalctl -u agent-packages -n 50"
-      # Not fatal: reachability is what "ready" means; --packages callers get the
-      # timeout below if they insist on waiting for an install that won't come.
       $WAIT_PACKAGES || packages_done=true
     fi
   fi

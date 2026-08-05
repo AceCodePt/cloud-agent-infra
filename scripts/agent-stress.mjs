@@ -1,16 +1,4 @@
 #!/usr/bin/env node
-// Drive K concurrent canary tasks against a running opencode server.
-//
-// The canary is a bounded, self-terminating task: read src/compiler/checker.ts
-// and list functions. It exercises the same stack a real client does -- read
-// tool, shared tsgo LSP, model stream -- but finishes, so "did it complete?"
-// is a yes/no answer per round. A box that halts stops completing; a box that
-// is merely slow completes, late.
-//
-// Records every round as ok/err so provider throttling (a 429 or upstream
-// error) can be told apart from the box halting. Those are different findings.
-//
-//   node agent-stress.mjs <K> <rounds> [canary prompt]
 import { request } from "node:http";
 
 const K = Number(process.argv[2]);
@@ -69,8 +57,6 @@ async function createSession() {
   return JSON.parse(r.body).data.id;
 }
 
-// One canary = ROUNDS sequential rounds on one session. Sequential within a
-// session (that is how a client works); parallel across sessions.
 async function canary(sid, k) {
   const rounds = [];
   for (let r = 0; r < ROUNDS; r++) {
@@ -116,7 +102,6 @@ const flat = results.flat();
 const ok = flat.filter((r) => r.outcome === "ok").length;
 const errs = flat.filter((r) => r.outcome.startsWith("err"));
 
-// Any /global/health probe mid-run failing = the server itself went away.
 const aliveAtEnd = await health();
 const aliveNow = await health();
 const elapsed = ((Date.now() - tStart) / 1000).toFixed(0);

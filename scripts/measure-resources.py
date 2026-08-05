@@ -1,40 +1,4 @@
 #!/usr/bin/env python3
-"""
-measure-resources.py — how much box does one client actually need?
-
-Runs ON the box (stdlib only). Samples until interrupted or --seconds elapses,
-then reports peaks and what they imply for capacity.
-
-WHY PSS AND NOT RSS
--------------------
-This is the whole reason this script exists rather than a `free -m` eyeball.
-
-The plan is one Unix user per client, so several clients means several copies of
-the same 180 MB opencode binary, the same libc, the same chromium. Those pages
-are shared, and RSS counts every shared page in full against every process that
-maps it. Sizing "how many clients fit" from RSS therefore overestimates, badly
-and in exactly the direction that costs money.
-
-PSS (proportional set size) divides each shared page by the number of processes
-sharing it, so summing PSS across everything is meaningful. It is the only
-memory number in this file that may be added up.
-
-MemAvailable is sampled too, as an independent cross-check that does not depend
-on getting the accounting right. If the two disagree, trust MemAvailable and
-distrust this script.
-
-WHY PEAK AND NOT AVERAGE
-------------------------
-Capacity is decided by the worst moment, not the typical one. An agent running a
-build, an LSP indexing a repo and a browser rendering a page do not politely
-take turns.
-
-WHY CPU IS REPORTED AT ALL
---------------------------
-On a 2 vCPU box the binding constraint is likely to be CPU, not RAM, and RAM is
-the thing everyone looks at. Load average is compared against nproc so that
-"we are out of CPU" cannot hide behind "there is plenty of memory free".
-"""
 import argparse
 import collections
 import json
@@ -50,9 +14,6 @@ _terminate = False
 
 
 def _finish_on_term(signum, frame):
-    # Break out of the sampling loop so the normal render path runs and prints
-    # peaks. A short-lived workload must not lose its numbers to a sampler
-    # whose --seconds outlives the work.
     global _terminate
     _terminate = True
 
@@ -67,11 +28,6 @@ def meminfo():
 
 
 def classify(cmdline, exe):
-    """Bucket a process into something a human reasons about.
-
-    Deliberately coarse. The question is "what does a client cost", not a
-    per-process audit.
-    """
     c = cmdline
     if "/usr/local/bin/opencode" in c or exe == "opencode":
         return "opencode"
@@ -91,7 +47,6 @@ def classify(cmdline, exe):
 
 
 def sample():
-    """One pass over /proc. Returns (by_user, by_kind, total_pss_kb, nproc_seen)."""
     by_user = collections.Counter()
     by_kind = collections.Counter()
     total = 0
@@ -100,8 +55,6 @@ def sample():
         if not pid.isdigit():
             continue
         try:
-            # smaps_rollup is a single cheap read; walking smaps per-mapping on
-            # a 9-process chromium is slow enough to distort what it measures.
             with open(f"/proc/{pid}/smaps_rollup") as f:
                 pss = 0
                 for line in f:
@@ -113,7 +66,6 @@ def sample():
             st = os.stat(f"/proc/{pid}")
             exe = os.path.basename((cmdline.split(" ") or [""])[0])
         except (FileNotFoundError, ProcessLookupError, PermissionError):
-            # Processes come and go mid-scan; that is normal, not an error.
             continue
         if pss == 0:
             continue

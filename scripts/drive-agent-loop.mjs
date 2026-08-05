@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-// Drive an opencode session through a long, multi-round agent task while
-// ./run measure samples the box. The session must already exist.
-//
-//   node drive-agent-loop.mjs <session_id> <repetitions> "prompt"
 import { request } from "node:http";
 
 const [sid, repeatStr, ...rest] = process.argv.slice(2);

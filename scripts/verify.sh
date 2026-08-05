@@ -1,18 +1,4 @@
 #!/usr/bin/env bash
-#
-# verify.sh — assert the whole expected end state; non-zero on any drift. Every
-# check that has ever broken in this project is encoded here, so a green run
-# means the box is in the known-good state, not merely "up".
-#
-# Facts are gathered in ONE ssh session per host: Tailscale SSH check mode can
-# demand an interactive browser confirmation per session. The browser stack is
-# checked by verify-browser.sh as a SIDECAR so its ~25s Chromium launch overlaps
-# everything else; its verdicts are spliced into the tally. That is also where
-# the deferred package install (startup.tf phase B) is accounted for: while it
-# is still running those checks SKIP rather than fail.
-#
-# Usage: ./verify.sh [--quick]   # --quick skips the CDP/browser check
-#
 set -uo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -33,7 +19,6 @@ bad() {
   FAIL=$((FAIL + 1))
 }
 skip() { printf '  \033[33mSKIP\033[0m  %s\n' "$1"; }
-# assert <description> <actual> <expected>
 assert() {
   if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (got '$2', want '$3')"; fi
 }
@@ -43,22 +28,15 @@ fact() { # fact <blob> <key>
   printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
 }
 
-# ======================================================================
 section "Cloud resources"
-# ======================================================================
 STATUS="$(instance_status)"
 if [[ "$STATUS" == unknown ]]; then
-  # A credential problem, not a VM problem — every gcloud check below would
-  # fail for the same reason.
   bad "cannot read instance $INSTANCE from gcloud (credential problem, not the VM)"
   printf '%s\n' "$(gcloud_identity_hint)"
 else
   assert "instance $INSTANCE is RUNNING" "$STATUS" "RUNNING"
 fi
 
-# The deployed startup script must contain no surviving '$$' (HCL escaping
-# footgun: bash expands it to the PID, which silently corrupted notify-phone and
-# headed-chromium). Terraform blocks this at plan time; assert on the artifact.
 RENDERED="$(gcloud_instance describe --format='value(metadata.items)' 2>/dev/null)"
 if [[ -z "$RENDERED" ]]; then
   bad "could not read startup-script metadata"
@@ -68,19 +46,9 @@ else
   ok "deployed startup-script is free of '\$\$'"
 fi
 
-# No public inbound, ever — only IAP (35.235.240.0/20) and intra-VPC.
-#
-# Filtered CLIENT-SIDE on purpose: a server-side `--filter=...sourceRanges~0.0.0.0/0`
-# is rejected by GCP ("Invalid list filter expression"), so the command errors
-# and prints nothing — indistinguishable from "no open rules". That made this
-# assertion a permanent silent PASS. Listing plainly and matching here cannot
-# fail that way. The exit code is also checked: a call that could not run must
-# FAIL, never pass.
 FW_ERR="$(mktemp)"
 if FW_ALL="$(gcloud compute firewall-rules list --project "$PROJECT_ID" \
   --format='csv[no-heading](name,direction,disabled,sourceRanges.list())' 2>"$FW_ERR")"; then
-  # csv fields: name,direction,disabled,sourceRanges — sourceRanges itself may
-  # contain commas, so match on the whole line rather than splitting on them.
   OPEN="$(printf '%s\n' "$FW_ALL" |
     awk -F, '$2=="INGRESS" && tolower($3)=="false" && /0\.0\.0\.0\/0/ {print $1}')"
   assert "no INGRESS rule allows 0.0.0.0/0" "${OPEN:-none}" "none"
@@ -90,9 +58,7 @@ else
 fi
 rm -f "$FW_ERR"
 
-# ======================================================================
 section "Tailnet"
-# ======================================================================
 TS_JSON="$(tailscale status --json 2>/dev/null)"
 TS_NAMES="$(printf '%s' "$TS_JSON" | python3 -c '
 import json,sys
@@ -108,33 +74,22 @@ else
   bad "$INSTANCE is not online in the tailnet (found: $(printf '%s' "$TS_NAMES" | tr '\n' ' '))"
 fi
 
-# A stale node keeps the MagicDNS name and pushes the new VM to <name>-1, making
-# `ssh $INSTANCE` silently target a dead machine.
 DUPES="$(printf '%s\n' "$TS_NAMES" | grep -cE "^$INSTANCE-[0-9]+ ")"
 assert "no duplicate ${INSTANCE}-N node (stale node not cleaned up)" "$DUPES" "0"
 
-# ======================================================================
 section "VM state"
-# ======================================================================
-# Start the browser sidecar NOW, so its Chromium launch overlaps the main fact
-# gathering; joined at the end, before the tally.
 BROWSER_OUT="$(mktemp)"
 trap 'rm -f "$BROWSER_OUT"' EXIT
 BROWSER_ARGS=(--raw)
 $QUICK && BROWSER_ARGS+=(--quick)
 "$SCRIPT_DIR"/verify-browser.sh "${BROWSER_ARGS[@]}" >"$BROWSER_OUT" 2>&1 &
 BROWSER_PID=$!
-# accept-new, not "ask": a rebuilt VM always presents a NEW host key, and under
-# BatchMode the default just refuses unknown hosts. accept-new still refuses a
-# CHANGED key — the case worth surfacing loudly below.
 VM_FACTS="$(ssh_vm QUICK="$QUICK" 'bash -s' 2>/dev/null <<'VMEOF'
 set -u
-# Non-interactive ssh gets a minimal PATH: swapon/zramctl live in /usr/sbin.
 export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH"
 echo "reachable=yes"
 mountpoint -q /mnt/data && echo "data_mounted=yes" || echo "data_mounted=no"
 echo "browser_owner=$(stat -c %U /mnt/data/browser 2>/dev/null || echo missing)"
-# Argument passthrough: these lines are what the '$$' bug corrupted.
 [ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
   && echo "chromium_args=ok" || echo "chromium_args=broken"
 [ "$(tail -1 /usr/local/bin/notify-phone)" = 'exec ssh -n termux-phone "$CMD$ARGS"' ] \
@@ -149,31 +104,21 @@ sudo sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' \
 sudo sshd -T 2>/dev/null | grep -qx 'permitrootlogin no' \
   && echo "sshd_rootlogin=off" || echo "sshd_rootlogin=ON"
 
-# End-to-end notification through the phone's forced command. </dev/null on every
-# ssh is load-bearing: this script arrives on the VM's stdin via `bash -s`, and
-# an ssh that inherits that stdin consumes the remainder, truncating the checks.
 if notify-phone "verify.sh" "state verified $(date -u +%H:%M:%SZ)" --id verify-sh >/dev/null 2>&1 </dev/null; then
   echo "notify_e2e=ok"
 else
   echo "notify_e2e=fail"
 fi
 
-# The notify key must NOT be able to do anything but notify — uses the real
-# private key, so it tests the phone's actual enforcement.
 if ssh -n -o BatchMode=yes -o ConnectTimeout=10 termux-phone id >/dev/null 2>&1; then
   echo "notify_key_shell=ALLOWED"
 else
   echo "notify_key_shell=refused"
 fi
-
-# chromium / Xvfb / zram / CDP are NOT checked here — they belong to the
-# deferred package install, and verify-browser.sh (running concurrently) owns
-# them so a still-installing box reports SKIP, not FAIL.
 VMEOF
 )"
 
 if [[ "$(fact "$VM_FACTS" reachable)" != "yes" ]]; then
-  # Re-run without silencing stderr so the reason is actionable.
   SSH_ERR="$(ssh_vm true 2>&1 || true)"
   case "$SSH_ERR" in
   *"REMOTE HOST IDENTIFICATION HAS CHANGED"*)
@@ -197,9 +142,7 @@ else
   assert "notify key is refused a shell on the phone" "$(fact "$VM_FACTS" notify_key_shell)" "refused"
 fi
 
-# ======================================================================
 section "Phone state"
-# ======================================================================
 if [[ -z "$PHONE_HOST" || -z "$PHONE_USER" ]]; then
   skip "phone checks (termux_host/termux_ssh_user not configured)"
 else
@@ -234,14 +177,12 @@ PHEOF
     assert "exactly one notify key authorised" "$(fact "$PHONE_FACTS" notify_keys)" "1"
     assert "notify key is hardened with restrict,command=" "$(fact "$PHONE_FACTS" restrict_lines)" "1"
 
-    # Your own key(s) must survive every re-key.
     if [[ "$(fact "$PHONE_FACTS" other_keys)" -ge 1 ]]; then
       ok "your own key(s) still present ($(fact "$PHONE_FACTS" other_keys))"
     else
       bad "no non-notify key left on the phone — you would lose shell access"
     fi
 
-    # The most drift-prone fact after a rebuild.
     VM_FPR="$(fact "$VM_FACTS" notify_key_fpr)"
     PH_FPR="$(fact "$PHONE_FACTS" notify_fpr)"
     if [[ -z "$VM_FPR" ]]; then
@@ -252,12 +193,7 @@ PHEOF
   fi
 fi
 
-# ======================================================================
 section "Browser stack (sidecar)"
-# ======================================================================
-# Join the sidecar started before the VM section and fold its verdicts into this
-# tally, so there is still exactly one Result line and one exit code. Its own
-# exit status is ignored: the FAIL lines it emitted are what count.
 wait "$BROWSER_PID" 2>/dev/null || true
 if [[ ! -s "$BROWSER_OUT" ]]; then
   bad "browser sidecar produced no output (verify-browser.sh failed to run)"
@@ -268,7 +204,6 @@ else
     PASS) ok "$desc" ;;
     FAIL) bad "$desc" ;;
     SKIP) skip "$desc" ;;
-    # Anything else is the sidecar dying and writing a bare error — surface it.
     *) bad "browser sidecar: $verdict $desc" ;;
     esac
   done <"$BROWSER_OUT"

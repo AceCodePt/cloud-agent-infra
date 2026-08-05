@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-// Drive an opencode session to do real work — measures tool subprocesses and LSPs.
-//
-// Usage: node drive-agent.mjs <session_id> "prompt text"
 import { request } from "node:http";
 
 const [sid, prompt] = process.argv.slice(2);

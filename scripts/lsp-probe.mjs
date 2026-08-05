@@ -1,19 +1,4 @@
 #!/usr/bin/env node
-// Measure what one LSP server actually costs on a real repo.
-//
-// Why this exists: ./run measure sizes the whole box, but the dominant unknown
-// in per-client sizing is the language server, not opencode itself. This drives
-// an LSP directly over stdio -- initialize, didOpen a batch of real files, wait
-// for it to finish indexing -- and samples the server's own process tree while
-// it works. No model, no API key, no tokens: the indexing cost is the same
-// whether a human or an agent caused the file to be opened.
-//
-// Reports PSS and RSS side by side on purpose. PSS is what may be added up
-// across clients; RSS is what everyone quotes. The gap between them is the
-// whole argument for measuring properly.
-//
-//   node lsp-probe.mjs --cmd "vtsls --stdio" --root /repo --ext .ts --files 40
-//
 import { spawn } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -40,8 +25,6 @@ if (!cmd || !root) {
   process.exit(64);
 }
 
-// Skip the directories that would make this measure the wrong thing: node_modules
-// is not what a client's agent reads, and .git is not source at all.
 const SKIP = new Set(["node_modules", ".git", "dist", "out", "build", ".next", "__pycache__", ".venv", "venv"]);
 
 function collect(dir, acc = []) {
@@ -61,8 +44,6 @@ function collect(dir, acc = []) {
       collect(p, acc);
     } else if (ext.some((x) => e.name.endsWith(x)) && !e.name.endsWith(".d.ts")) {
       try {
-        // Prefer files with actual substance; a repo full of 3-line barrels
-        // would understate the type-checking work.
         if (statSync(p).size > 2000) acc.push(p);
       } catch {}
     }
@@ -77,8 +58,6 @@ if (files.length === 0) {
 }
 
 // --- process tree accounting -------------------------------------------------
-// LSPs fork: tsserver spawns a type-acquisition child, pyright spawns workers.
-// Charging only the parent would undercount, which is the direction that hurts.
 function descendants(root_pid) {
   const kids = new Map();
   let pids;
@@ -90,7 +69,6 @@ function descendants(root_pid) {
   for (const pid of pids) {
     try {
       const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      // comm can contain spaces and parens, so parse from the last ')'.
       const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
       if (!kids.has(ppid)) kids.set(ppid, []);
       kids.get(ppid).push(Number(pid));
@@ -162,7 +140,6 @@ child.stdout.on("data", (d) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { continue; }
     if (msg.method === "textDocument/publishDiagnostics") diagnostics++;
-    // Servers that ask questions stall forever if nobody answers.
     if (msg.id !== undefined && msg.method) send({ id: msg.id, result: null });
     if (msg.id !== undefined && waiters.has(msg.id)) { waiters.get(msg.id)(msg); waiters.delete(msg.id); }
   }
@@ -226,8 +203,6 @@ const langOf = (f) =>
     });
   }
 
-  // Indexing is done when the server stops talking, not when a timer expires --
-  // but cap it so a chatty server cannot run forever.
   const deadline = Date.now() + settleMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 500));

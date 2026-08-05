@@ -54,6 +54,9 @@ reach Terraform. `./run` works in a completely bare shell:
 env -i HOME="$HOME" PATH="$PATH" ./run plan   # No changes.
 ```
 
+For testing, point `load_config` at a different file without touching the real one:
+`CONFIG_ENV=/path/to/config.env ./run plan`.
+
 **Why no direnv:** an `.envrc` with `dotenv config.env` used to live here and
 actively caused a bug, and it leaked the tailnet-admin `TAILSCALE_API_KEY` into
 every process started from this directory — agents included. Config loading has
@@ -131,7 +134,9 @@ upgrade`, the headed-browser stack (chromium, fonts, Xvfb, xauth, x11vnc,
 `libgl1-mesa-dri`, zram), Node.js 24, and opencode at a pinned version as a single
 root-owned binary in `/usr/local/bin`. It runs as `agent-packages.service`,
 launched with `systemctl restart --no-block`, so the metadata script runner
-returns immediately.
+returns immediately. The agent user's default shell is `zsh` because the dotfiles
+are zsh-centric; the install picks the single interactive account phase A created
+(uid ≥ 1000) rather than hardcoding a name.
 
 Measured, not guessed: `274s → 84s` for instance-created → key-consumed. The
 remaining 41s of the 84 is GCE booting the guest before it hands over.
@@ -224,7 +229,8 @@ loading, no CDP refusal. That belongs to whichever app owns the session — e.g.
 only), launches `headed-chromium` on `:99`, opens an SSH tunnel
 `localhost:5900 → box:5900`, and opens your local VNC client. You drive whatever
 is in the browser by hand, including a one-time login; on exit the tunnel closes
-and `x11vnc` stops.
+and `x11vnc` stops. x11vnc runs with `-nopw` (no password) — safe only because it
+is bound to loopback and the SSH tunnel is the only path to it.
 
 ```sh
 ./run browser                       # needs a VNC client locally, e.g. tigervnc
@@ -503,3 +509,25 @@ that costs money.
   Wayland-native VNC client (`remmina`) so XWayland is not in the path at all.
   `browser.sh` now preflights this instead of starting a tunnel it has to tear
   down.
+- **SSH is `accept-new`, not "ask".** A rebuilt VM always presents a new host key;
+  under BatchMode the default just refuses unknown hosts. `accept-new` takes an
+  unknown host silently but refuses a *changed* key — so a leftover `known_hosts`
+  entry from a previous build reads as a VM fault. `up` and `verify` clear it for
+  you (`ssh-keygen -R cloud-agent`).
+- **Tailscale SSH check mode demands a browser confirmation.** A non-interactive
+  session (verify, rekey, measure) can trigger an "additional check" prompt —
+  once per session, not per host. Run `./run ssh` once and follow the URL; the
+  scripts warn instead of failing. `./run ssh` deliberately skips BatchMode so
+  those prompts work.
+- **x11vnc exits 2 on SIGTERM**, so a plain `systemctl stop` leaves the unit
+  "Failed (exit-code)" forever — a real-looking fault on a box whose correct state
+  is "stopped, login finished". `SuccessExitStatus=2` fixes new boxes and
+  `reset-failed` clears the bogus entry; `browser.sh` does both.
+- **A backgrounded process over ssh dies with the session** unless it gets
+  `setsid` + `nohup` + closed stdin + `disown` — all four, or the process is a
+  child of the ssh session. `browser.sh` and the measurement harness use all
+  four.
+- **`instance_status` distinguishes "absent" from "unknown".** "unknown" means
+  gcloud could not read the VM at all — almost always a credential mismatch, not a
+  deleted VM. `up` refuses to guess there, so it cannot build a second VM while
+  the real one runs invisibly.

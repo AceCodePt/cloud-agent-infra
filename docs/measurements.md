@@ -234,7 +234,7 @@ that owns the account, and lives with it in
 **Non-interactive SSH has a minimal `PATH`.** `swapon` and `zramctl` live in
 `/usr/sbin`, so `ssh host swapon --show` returns "command not found". An ad-hoc
 probe swallowed that into `|| echo "(none)"` and this repo concluded — in writing
-— that the box had no swap at all. `verify-browser.sh:79-81` already documented
+— that the box had no swap at all. `verify-browser.sh:42` already documented
 the trap and exported the right `PATH`; the one-off probe did not.
 
 **`/proc/<pid>/environ` lies about Chromium.** It showed `TZ` unset on a browser

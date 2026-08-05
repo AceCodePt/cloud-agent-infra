@@ -1,25 +1,4 @@
 #!/usr/bin/env bash
-#
-# tailscale-api.sh — talk to the Tailscale API so the rebuild needs no manual
-# admin-console steps.
-#
-# Subcommands:
-#   mint          Create a ONE-OFF (single-use), pre-approved auth key, write it
-#                 to tailscale.auto.tfvars (auto-loaded by Terraform).
-#   check         Assert the auth key Terraform is about to bake in is usable.
-#   delete-node   Remove the instance's node (+ any <name>-N duplicate), so the
-#                 next build gets the clean MagicDNS name.
-#   list          Show the tailnet's devices (read-only).
-#
-# Auth: TAILSCALE_API_KEY in config.env — a tailnet-ADMIN credential that can
-# mint keys and delete devices, so it never reaches the VM; only the minted
-# single-use key does. A scoped OAuth client is the better long-term choice.
-#
-# WARNING: deleting the node of a RUNNING VM orphans it: tailscaled keeps its
-# node identity on the data disk, and once the node is gone server-side every
-# netmap poll fails `404: node not found` — it can't rejoin without a fresh key.
-# cleanup.sh only deletes the node once the instance is verifiably gone.
-#
 set -euo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -28,8 +7,6 @@ load_config
 API="https://api.tailscale.com/api/v2"
 KEYFILE="$TF_DIR/tailscale.auto.tfvars"
 
-# How long the minted key stays valid. It is consumed within minutes of the
-# apply, so this only bounds the window in which an unused key is useful.
 KEY_TTL_SECONDS="${TAILSCALE_KEY_TTL_SECONDS:-86400}"
 
 require_api_key() {
@@ -40,7 +17,6 @@ require_api_key() {
 
 command -v python3 >/dev/null || die "python3 is required."
 
-# api <METHOD> <PATH> [json-body]  -> body on stdout, non-zero on HTTP >= 400
 api() {
   local method="$1" path="$2" body="${3:-}"
   local args=(-s -w '\n%{http_code}' -u "$API_KEY:" -X "$method" "$API$path")
@@ -52,8 +28,6 @@ api() {
   body="$(printf '%s' "$out" | sed '$d')"
 
   if [[ "$code" -ge 400 ]]; then
-    # Map the failures you actually hit to something actionable — a bare
-    # "HTTP 401" during bootstrap looks like infrastructure failing.
     case "$code" in
     401)
       die "your Tailscale API key is no good (HTTP 401 Unauthorized).
@@ -95,11 +69,6 @@ cmd_mint() {
   require_api_key
   echo ">> Minting a one-off auth key (single-use, pre-approved, ${KEY_TTL_SECONDS}s TTL)"
 
-  # reusable=false  -> one-off, as requested
-  # ephemeral=false -> the node must survive going offline; ephemeral nodes are
-  #                    deleted on disconnect, which would orphan the VM on every
-  #                    reboot (see the 404 warning above).
-  # preauthorized   -> joins without waiting for manual device approval.
   local req
   req="$(
     python3 - "$KEY_TTL_SECONDS" "$INSTANCE" <<'PY'
@@ -112,8 +81,6 @@ print(json.dumps({
         "preauthorized": True,
     }}},
     "expirySeconds": ttl,
-    # The API rejects a description containing characters like ':', so keep the
-    # timestamp punctuation-free.
     "description": f"{instance} one-off {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H%M} UTC",
 }))
 PY
@@ -127,8 +94,6 @@ PY
 
   [[ "$key" == tskey-auth-* ]] || die "API did not return an auth key (got '${key:0:12}...')"
 
-  # Written as a .auto.tfvars file so a plain `terraform apply` picks it up with
-  # no extra flags. *.tfvars is already git-ignored.
   umask 077
   printf 'tailscale_auth_key = "%s"\n' "$key" >"$KEYFILE"
   chmod 600 "$KEYFILE"
@@ -136,9 +101,6 @@ PY
   echo ">> Wrote $KEYFILE (mode 600, git-ignored). key id=$id expires=$expires"
 }
 
-# The key Terraform will actually use. This MUST mirror Terraform's variable
-# precedence, or the check validates a different key than the one that gets baked
-# into the VM: *.auto.tfvars outranks TF_VAR_* from the environment.
 effective_auth_key() {
   local key=""
   if [[ -f "$KEYFILE" ]]; then
@@ -147,12 +109,6 @@ effective_auth_key() {
   printf '%s' "${key:-${TF_VAR_tailscale_auth_key:-}}"
 }
 
-# Is $INSTANCE already a member of the tailnet? Prints present|absent|unknown.
-#
-# Asked over the API rather than the local `tailscale status`, so the answer does
-# not depend on this laptop being on the tailnet at the time. Deliberately NOT via
-# api(): that dies (exiting the whole script) on any HTTP >= 400, and here an
-# unreachable API is a third answer to be reported, not a fatal error.
 node_state() {
   local out code body devfile
   out="$(curl -s -w '\n%{http_code}' -u "$API_KEY:" "$API/tailnet/-/devices" 2>/dev/null)" || {
@@ -166,8 +122,6 @@ node_state() {
     return 0
   }
 
-  # A temp file, not a pipe: `python3 -` reads the *program* from stdin, so a
-  # heredoc program and piped data cannot coexist.
   devfile="$(mktemp)"
   # shellcheck disable=SC2064
   trap "rm -f '$devfile'" RETURN
@@ -195,14 +149,6 @@ PY
   fi
 }
 
-# Assert the auth key is usable BEFORE terraform bakes it in: a key revoked or
-# spent between mint and apply produces a VM that boots, fails `tailscale up`,
-# and is unreachable by design — a five-minute timeout that looks like
-# infrastructure rather than a dead credential.
-#
-# One-off keys are marked invalid the moment they're CONSUMED, so an invalid key
-# is only an error when the node still needs it. If $INSTANCE is already on the
-# tailnet the spent key is expected — warn, don't die.
 cmd_check() {
   local key id
   key="$(effective_auth_key)"
@@ -220,11 +166,8 @@ cmd_check() {
     return 0
   fi
 
-  # tskey-auth-<id>-<secret>
   id="$(printf '%s' "$key" | cut -d- -f3)"
 
-  # Deliberately NOT via api(): that dies on 404, and here a 404 is a finding to
-  # be interpreted (key unknown to control), not a transport failure.
   local out code body
   out="$(curl -s -w '\n%{http_code}' -u "$API_KEY:" "$API/tailnet/-/keys/$id")" ||
     die "curl failed talking to the Tailscale API"
@@ -261,7 +204,6 @@ else:
     return 0
   fi
 
-  # Unusable. Whether that is fatal depends on whether the VM still needs it.
   local node
   node="$(node_state)"
   if [[ "$node" == present ]]; then
@@ -299,15 +241,11 @@ else:
   Note: revoking a key in the admin console after minting it does exactly this."
 }
 
-# Delete the instance's node, plus any <name>-N MagicDNS duplicate a previous
-# build left behind.
 cmd_delete_node() {
   require_api_key
   local target="${1:-$INSTANCE}"
   echo ">> Looking for tailnet nodes matching '$target'"
 
-  # The device list goes to a temp file rather than a pipe: `python3 -` reads the
-  # *program* from stdin, so a heredoc program and piped data cannot coexist.
   local devfile
   devfile="$(mktemp)"
   # shellcheck disable=SC2064
@@ -321,7 +259,6 @@ import json, re, sys
 target, path = sys.argv[1], sys.argv[2]
 with open(path) as fh:
     data = json.load(fh)
-# MagicDNS may suffix duplicates: cloud-agent-1, cloud-agent-2, ...
 pat = re.compile(rf"^{re.escape(target)}(-\d+)?$")
 for d in data.get("devices", []):
     label = d.get("name", "").split(".")[0]

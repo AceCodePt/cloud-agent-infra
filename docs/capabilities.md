@@ -70,6 +70,9 @@ UI) belongs to the caller. `BROWSER_CMD`, `BROWSER_PROFILE_DIR`, and
 | `./run tf <args>` | Raw terraform in `terraform/` (`./run tf state list`) |
 | `./run fmt` / `validate` / `check` | Format / validate + `bash -n` / validate + verify |
 
+`./run validate` runs `terraform validate` with `-backend=false` on a clean
+checkout (no `.terraform/` yet), so it works before any infrastructure exists.
+
 ---
 
 ## 2. The scripts not reachable from `./run`

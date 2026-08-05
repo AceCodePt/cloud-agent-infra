@@ -1,7 +1,4 @@
 #!/bin/bash
-# Synchronous stress run: everything stays in this ssh session's foreground.
-# server (bg but fd-close), sampler (bg writing to file), stress (FOREGROUND),
-# then SIGTERM sampler and print halt signals. ssh returns when this exits.
 set -uo pipefail
 K=$1
 ROUNDS=$2
@@ -10,8 +7,6 @@ export PATH=/usr/local/sbin:/usr/sbin:/sbin:$PATH
 
 echo "=== $LABEL ==="
 
-# Anchored patterns only: pkill -f '[o]pencode' matches the killer's own ssh
-# command line (which contains that text) and kills the shell running us.
 pkill -f '^/usr/local/bin/opencode serve' 2>/dev/null || true
 pkill -f 'tsgo --lsp' 2>/dev/null || true
 pkill -f '^/usr/bin/node /tmp/agent-stress' 2>/dev/null || true
