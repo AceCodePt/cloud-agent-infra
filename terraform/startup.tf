@@ -85,6 +85,9 @@ RestartSec=2
 WantedBy=multi-user.target
 UNIT
 
+    systemctl enable xvfb.service
+    systemctl start xvfb.service
+
     echo 'export DISPLAY=:99' > /etc/profile.d/display.sh
 
     cat > /etc/systemd/system/x11vnc.service <<'UNIT'
