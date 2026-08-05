@@ -29,19 +29,9 @@ load_config() {
 
 tf() { terraform -chdir="$TF_DIR" "$@"; }
 
-tf_out() { tf output -raw "$1" 2>/dev/null || true; }
-
-load_phone_config() {
-  PHONE_HOST="${TF_VAR_termux_host:-$(tf_out termux_host)}"
-  PHONE_USER="${TF_VAR_termux_ssh_user:-$(tf_out termux_ssh_user)}"
-  PHONE_PORT="${TF_VAR_termux_ssh_port:-$(tf_out termux_ssh_port)}"
-  PHONE_PORT="${PHONE_PORT:-8022}"
-}
-
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
 ssh_vm() { ssh "${SSH_OPTS[@]}" "$SSH_USER@$INSTANCE" "$@"; }
-ssh_phone() { ssh "${SSH_OPTS[@]}" -p "$PHONE_PORT" "$PHONE_USER@$PHONE_HOST" "$@"; }
 
 vm_online() {
   command -v tailscale >/dev/null 2>&1 || return 1

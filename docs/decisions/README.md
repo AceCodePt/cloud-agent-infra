@@ -34,7 +34,7 @@ the premise is unevidenced".
 | Separate persistent data disk at `/mnt/data` | Made |
 | Two-phase boot | Made |
 | One-off auth keys minted per build, validated before apply | Made |
-| Node.js from the vendor apt repo, not a curl-to-shell install | Made |
+| Node.js from the vendor apt repo, not a curl-to-shell install | Superseded |
 | `config.env` as the single source of truth; no direnv | Made |
 | zram compressed swap — kept | Made |
 | Stay on GCP for now | Made |
@@ -60,24 +60,13 @@ exposure — belongs to the app that owns the account, not here. See
 [`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader).
 This repo only builds the box the browser runs on.
 
-### [agents-and-sizing.md](agents-and-sizing.md) — the agent runner and how the box is sized
-
-| Decision | Status |
-|---|---|
-| opencode is the runner, pinned, one root-owned binary | Made |
-| Server + attach, not a TUI per human; phone drives it over HTTP/SSE | Made |
-| Size from measurement, and measure PSS rather than RSS | Made |
-| CPU is the binding constraint, so a resize buys cores | Made |
-| Language server chosen per client repo; tsgo for large TypeScript | Made |
-| Node rather than Python for anything the extension talks to | Made |
-| Measure token spend before optimising the VM further | Made |
-| Concurrency target: 5–10 clients, ~2 simultaneously active | Made |
-| Isolation model: Unix user per client | Made |
-| Browser testing: one shared browser, or served over the tailnet from outside | Made |
-| Phone approval loop | Open |
-| Build the LinkedIn reader before touching infrastructure | Superseded |
-
 ### [history.md](history.md) — superseded architecture
 
 Where the project started and why it moved: container-on-COS → native VM, Arch
 → Debian. Kept only so the same ground is not re-walked.
+
+---
+
+Agent-layer decisions (the runner, per-client isolation, sizing, the phone
+approval loop) moved with the agent layer to
+[`~/stuff/phone-approval`](../../../phone-approval/docs/decisions/README.md).

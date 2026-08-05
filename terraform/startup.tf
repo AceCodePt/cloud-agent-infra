@@ -121,47 +121,6 @@ CHROME
     mkdir -p "$DATA_MNT/browser" "$DATA_MNT/app"
     chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
 
-    TERMUX_HOST="${var.termux_host}"
-    TERMUX_USER="${var.termux_ssh_user}"
-    if [ -n "$TERMUX_HOST" ] && [ -n "$TERMUX_USER" ]; then
-      TERMUX_DIR="$DATA_MNT/ssh-termux"
-      mkdir -p "$TERMUX_DIR"
-      if [ ! -f "$TERMUX_DIR/id_ed25519" ]; then
-        ssh-keygen -t ed25519 -N "" -f "$TERMUX_DIR/id_ed25519" \
-          -C "$USER_NAME@${var.instance_name}-notify-phone"
-        echo ">> generated notify-phone keypair; public key follows (add to phone's ~/.ssh/authorized_keys):"
-        cat "$TERMUX_DIR/id_ed25519.pub"
-      fi
-      touch "$TERMUX_DIR/known_hosts"
-      chown -R "$USER_NAME:$USER_NAME" "$TERMUX_DIR"
-      chmod 700 "$TERMUX_DIR"
-      chmod 600 "$TERMUX_DIR/id_ed25519" "$TERMUX_DIR/known_hosts"
-      chmod 644 "$TERMUX_DIR/id_ed25519.pub"
-
-      mkdir -p /etc/ssh/ssh_config.d
-      cat > /etc/ssh/ssh_config.d/99-termux.conf <<SSHCFG
-Host termux-phone
-  HostName $TERMUX_HOST
-  Port ${var.termux_ssh_port}
-  User $TERMUX_USER
-  IdentityFile $TERMUX_DIR/id_ed25519
-  UserKnownHostsFile $TERMUX_DIR/known_hosts
-  StrictHostKeyChecking accept-new
-  ConnectTimeout 5
-  BatchMode yes
-SSHCFG
-
-      cat > /usr/local/bin/notify-phone <<'NOTIFY'
-#!/usr/bin/env bash
-CMD="termux-notification"
-printf -v ARGS ' %q' -t "$${1:-Agent}" -c "$${2:-}" "$${@:3}"
-exec ssh -n termux-phone "$CMD$ARGS"
-NOTIFY
-      chmod +x /usr/local/bin/notify-phone
-    else
-      echo ">> notify-phone skipped: TF_VAR_termux_host or TF_VAR_termux_ssh_user is empty"
-    fi
-
     cat > /usr/local/sbin/agent-install-packages <<'PKGS'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -185,47 +144,6 @@ $APT upgrade -y
 $APT install -y build-essential xvfb xauth chromium \
   fonts-liberation fonts-noto-core zram-tools \
   x11vnc python3-venv libgl1-mesa-dri
-
-echo ">> wave 2b: node.js LTS"
-if ! command -v node >/dev/null 2>&1; then
-  install -d -m 0755 /etc/apt/keyrings
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key |
-    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-  chmod 0644 /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
-    > /etc/apt/sources.list.d/nodesource.list
-  $APT update
-fi
-$APT install -y nodejs
-echo ">> node $(node --version), npm $(npm --version)"
-
-OPENCODE_VERSION="1.18.11"
-if [ "$(opencode --version 2>/dev/null)" != "$OPENCODE_VERSION" ]; then
-  echo ">> wave 2c: opencode $OPENCODE_VERSION"
-  oc_target="linux-x64"
-  grep -qwi avx2 /proc/cpuinfo || oc_target="linux-x64-baseline"
-  oc_tmp="$(mktemp -d)"
-  if curl -fsSL -o "$oc_tmp/oc.tar.gz" \
-    "https://github.com/anomalyco/opencode/releases/download/v$${OPENCODE_VERSION}/opencode-$${oc_target}.tar.gz"; then
-    tar -xzf "$oc_tmp/oc.tar.gz" -C "$oc_tmp"
-    install -m 0755 -o root -g root "$oc_tmp/opencode" /usr/local/bin/opencode
-    echo ">> opencode $(/usr/local/bin/opencode --version 2>&1) ($oc_target)"
-  else
-    echo "!! opencode download failed; box still usable, re-run the startup script" >&2
-  fi
-  rm -rf "$oc_tmp"
-else
-  echo ">> opencode $OPENCODE_VERSION already installed"
-fi
-
-echo ">> configuring zram swap"
-printf 'ALGO=zstd\nPERCENT=50\n' > /etc/default/zramswap
-
-echo ">> enabling xvfb + zram"
-systemctl daemon-reload
-systemctl enable --now xvfb
-systemctl enable zramswap
-systemctl restart zramswap
 
 echo "=== agent packages complete $(date -u) ==="
 PKGS

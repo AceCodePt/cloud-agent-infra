@@ -15,9 +15,9 @@ one sshd path, one `tailscaled`. See [history.md](history.md).
 ## Debian 12 from Google's image family, not Arch — **Made**
 
 `debian-cloud/debian-12` is rebuilt constantly, so first boot has nothing to
-catch up on, and `unattended-upgrades` ships enabled. The workload (agents,
-Chromium, Tailscale) is distro-agnostic, so laptop parity bought nothing and a
-rolling release cost babysitting. See [history.md](history.md).
+catch up on, and `unattended-upgrades` ships enabled. The workload (Chromium,
+Tailscale) is distro-agnostic, so laptop parity bought nothing and a rolling
+release cost babysitting. See [history.md](history.md).
 
 ## Tailscale-only access, dedicated VPC, IAP as break-glass — **Made**
 
@@ -35,7 +35,7 @@ the reason provider migration is not a cheap decision (see below).
 ## Separate persistent data disk at `/mnt/data` — **Made**
 
 The VM and its root disk are disposable; the data disk is not. Repos, work
-output, browser profiles and the notify keypair live there, and
+output and browser profiles live there, and
 `/var/lib/tailscale` is **bind-mounted** (not symlinked) onto it so the node
 identity survives instance replacement.
 
@@ -47,8 +47,8 @@ directory (status 238).
 
 Phase A does only what is needed to *reach* the box: mount the disk, install
 Tailscale, create the user, `tailscale up`. Everything else — apt upgrade, CLI
-tools, the browser stack, Node, opencode — is `agent-packages.service`, started
-with `systemctl restart --no-block`.
+tools, the browser stack — is `agent-packages.service`, started with
+`systemctl restart --no-block`.
 
 The reason is not tidiness: until `tailscale up` runs there is no inbound path
 at all, so every second of foreground work is a second in which the VM cannot be
@@ -76,12 +76,12 @@ intend to keep.** `tailscaled`'s identity is on the data disk, so once the node
 is gone server-side every netmap poll fails `404: node not found` and the box
 cannot rejoin without a fresh key.
 
-## Node.js from the vendor apt repo — **Made**
+## Node.js from the vendor apt repo — **Superseded**
 
-Debian bookworm ships Node 18, which is EOL. Node 24 comes from NodeSource as an
-**apt source**, the same pattern phase A uses for Tailscale, so it keeps getting
-security updates — unlike a curl-pipe-to-shell binary drop that apt knows
-nothing about.
+Debian bookworm ships Node 18, which is EOL. Node 24 once came from NodeSource as
+an **apt source**, the same pattern phase A uses for Tailscale. Node provisioning
+moved out with the agent layer to `~/stuff/phone-approval` (its
+`scripts/provision-agent.sh`); this repo no longer installs Node.
 
 ## `config.env` as the single source of truth; no direnv — **Made**
 
@@ -99,8 +99,8 @@ directory — agents included.
 ## zram compressed swap — kept — **Made**
 
 3.9 GB zstd, active, and **0 B in use**, because a 530 MB browser on an 8 GB box
-never reaches for swap. It earns nothing today and is kept for the multi-agent
-workload, which is exactly the case swap headroom exists for.
+never reaches for swap. It earns nothing today and is kept for when a workload
+pushes against the memory ceiling — exactly the case swap headroom exists for.
 
 It was briefly removed on the false premise that it was not installed. That
 premise came from a probe that lost `swapon` to a non-interactive `PATH` — see
@@ -117,7 +117,8 @@ install and passes `--force-confold`.
 Not on merit. GCP is poor value at these specs — measured all-in $60.25/mo
 against roughly $10/mo for comparable Hetzner hardware — but:
 
-- the sizing that would justify migrating is downstream of goal 4 and unmeasured,
+- the sizing that would justify migrating is unmeasured — what runs on this box
+  has not yet pushed it,
 - ~20% of the repo is provider-specific and the risky 20% is concentrated in
   observability and break-glass (see `SPEC.md` → open questions),
 - and the gap only becomes large at large sizes: at 2 GB it is ~$154/yr, at
@@ -135,7 +136,7 @@ Reserved, then released. The premise was that the ephemeral IP changing on every
 pause (measured `34.165.106.36` → `34.165.192.90`) would trip account-security
 checks on a logged-in session belonging to an app on the box.
 
-That premise does not survive contact with normal usage: phones roam between home
+That premise does not survive contact with normal usage: devices roam between home
 wifi, mobile data and café APs all day, so a changed IP cannot be weighted
 heavily or the mobile apps would be unusable. The evidence was thin and came
 largely from proxy vendors, who sell the remedy. Back to `access_config {}`.
@@ -146,16 +147,18 @@ Revisit only if an actual account challenge appears.
 
 The box is `e2-standard-2` (2 vCPU / 8 GB) because of an abandoned plan, and a
 headed browser peaks at ~530 MB — but measurement says the box is **CPU**-bound,
-not RAM-bound, and goal 4 may need more of both. Do not resize until goal 4 is
-specified; when it is, buy cores.
+not RAM-bound. Do not resize until a workload on this box measures a real need;
+when it does, buy cores.
 
 `hardwareConcurrency: 2` is visible in the browser fingerprint and is only
 fixable by paying for a bigger machine type. Accepted for now.
 
 ## Provider migration — **Parked**
 
-Blocked on two things: goal 4's real sizing (see
-[agents-and-sizing.md](agents-and-sizing.md)), and break-glass.
+Blocked on two things: real sizing for whatever runs on this box (the agent-layer
+measurements that would show it are in
+[`~/stuff/phone-approval`](../../../phone-approval/docs/measurements.md)), and
+break-glass.
 
 **Break-glass is the honest counterweight to the $1,353/yr.** GCP's IAP tunnel is
 the only non-Tailscale way into a box with zero public ingress. Hetzner has no
@@ -167,7 +170,7 @@ simultaneously**. GCP has two independent escapes; Hetzner would have zero. Deci
 this before writing any Terraform.
 
 A full survey found **~80% of the repo is provider-agnostic** — all of
-`tailscale-api.sh` and `verify-browser.sh`, 24 of 27 `verify.sh` checks, and most
+`tailscale-api.sh` and `verify-browser.sh`, most of `verify.sh`'s checks, and most
 of `startup.tf`'s guest logic including the two-phase design. The danger is
 concentrated in the other 20%, recorded here so the survey is not redone:
 
@@ -176,8 +179,8 @@ concentrated in the other 20%, recorded here so the survey is not redone:
   itself as `/usr/local/sbin/agent-startup` plus a systemd unit, so "re-run
   startup" is `systemctl restart` over SSH. That is an improvement on the status
   quo.
-- **No programmatic serial console.** `wait-ready.sh` and `provision-phone.sh`
-  lose their no-SSH observability channel, and the fallback requires SSH, which
+- **No programmatic serial console.** `wait-ready.sh` loses its no-SSH
+  observability channel, and the fallback requires SSH, which
   requires the tailnet, which is the thing being waited on. Replace with an
   outbound status beacon from phase A, which also eliminates the console-flush bug
   class that already cost one debugging session.

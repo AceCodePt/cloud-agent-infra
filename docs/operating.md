@@ -22,12 +22,10 @@ cp example.config.env config.env
 TF_VAR_project_id="your-project-id"
 TF_VAR_region="me-west1"           # Tel Aviv: lowest latency from Israel
 TF_VAR_zone="me-west1-a"
-TF_VAR_machine_type="e2-standard-2"  # 2 full vCPU/8GB for agents+browsers; e2-medium is leaner
+TF_VAR_machine_type="e2-standard-2"  # 2 full vCPU/8GB; e2-medium is leaner
 TF_VAR_instance_name="cloud-agent"   # also the tailnet hostname
 TF_VAR_ssh_user="youruser"           # your Unix user on the box
 TF_VAR_data_disk_size_gb="20"        # persistent disk for repos + tailscale state (defaults to 20)
-TF_VAR_termux_host="galaxy-s24-ultra" # phone's Tailscale MagicDNS name, for notify-phone (optional)
-TF_VAR_termux_ssh_user="u0_a221"      # `whoami` inside Termux, required for notify-phone to work
 
 # Tailnet admin key. bootstrap.sh mints a single-use auth key per build from it.
 TAILSCALE_API_KEY="tskey-api-..."
@@ -89,8 +87,7 @@ exactly one definition. Full reasoning:
 is already true and does nothing if the answer is "already correct". It ends by
 running `verify.sh`, so it can't lie about the result. **Non-destructive by
 contract** — it never destroys the VM, data disk, state bucket, or a tailnet
-node. It cannot cost you the notify keypair, your browser logins, or the work on
-`/mnt/data`.
+node. It cannot cost you your browser logins or the work on `/mnt/data`.
 
 The steps `up` encodes, in order, doing only what is missing:
 
@@ -101,25 +98,22 @@ The steps `up` encodes, in order, doing only what is missing:
 | 3 | Infrastructure | `terraform apply` — always; it is itself a converge |
 | 4 | Guest has consumed the key | the VM is not online in the tailnet |
 | 5 | Local `known_hosts` | a stale entry from a previous VM is blocking SSH |
-| 6 | Phone notify key | always (idempotent; the most drift-prone fact there is) |
-| 7 | Proof | `verify.sh`, non-zero exit on any drift |
+| 6 | Proof | `verify.sh`, non-zero exit on any drift |
 
 Step 4 is why `up` exists — `apply` alone cannot re-key a running VM (below).
 
 ### Rebuilding from scratch
 
 `./run rebuild` is the destructive sibling: `cleanup → bootstrap → apply → wait →
-phone → verify`. It **destroys the data disk, the state bucket and the tailnet
-node** — a new notify keypair, a stale pinned key on the phone, and loss of
-everything on `/mnt/data`. Reach for it only when you mean exactly that; `up` is
-what you want the other 99% of the time.
+verify`. It **destroys the data disk, the state bucket and the tailnet
+node** — a new node identity and loss of everything on `/mnt/data`. Reach for it
+only when you mean exactly that; `up` is what you want the other 99% of the time.
 
 ```sh
 ./scripts/cleanup.sh          # tear down + delete the tailnet node
 ./scripts/bootstrap.sh        # state bucket + backend.tf + init + mint a one-off auth key
 ./run apply                   # instance created; reachable ~40-60s later
 ./scripts/wait-ready.sh       # block until on the tailnet AND startup script done
-./scripts/provision-phone.sh  # re-key the phone to the VM's CURRENT pubkey
 ./scripts/verify.sh           # assert the entire end state, non-zero on any drift
 ```
 
@@ -130,13 +124,12 @@ mount the data disk, install Tailscale, create your user, `tailscale up`. The
 single-use auth key is spent at the end of phase A.
 
 **Phase B (background, ~4 min)** is everything else, in waves: CLI tools, `apt
-upgrade`, the headed-browser stack (chromium, fonts, Xvfb, xauth, x11vnc,
-`libgl1-mesa-dri`, zram), Node.js 24, and opencode at a pinned version as a single
-root-owned binary in `/usr/local/bin`. It runs as `agent-packages.service`,
+upgrade`, and the headed-browser stack (chromium, fonts, Xvfb, xauth, x11vnc,
+`libgl1-mesa-dri`, zram). It runs as `agent-packages.service`,
 launched with `systemctl restart --no-block`, so the metadata script runner
-returns immediately. The agent user's default shell is `zsh` because the dotfiles
-are zsh-centric; the install picks the single interactive account phase A created
-(uid ≥ 1000) rather than hardcoding a name.
+returns immediately. The default shell for the interactive account phase A
+created is `zsh`; the install picks that single account (uid ≥ 1000) rather than
+hardcoding a name.
 
 Measured, not guessed: `274s → 84s` for instance-created → key-consumed. The
 remaining 41s of the 84 is GCE booting the guest before it hands over.
@@ -189,8 +182,8 @@ needs it; a spent key on an already-joined node is expected and only warns.
 
 ## The browser: one wrapper, on a virtual display
 
-Agents get a **real browser** — many sites block `HeadlessChrome`, so the box
-runs Chromium *headed* on a virtual display: **Xvfb** provides a 1920×1080 screen
+The box runs a **real browser** — many sites block `HeadlessChrome`, so Chromium
+runs *headed* on a virtual display: **Xvfb** provides a 1920×1080 screen
 (`DISPLAY :99`, pre-set in every login shell and tmux) and Chromium renders into
 it like a normal browser. No desktop or window manager.
 
@@ -198,7 +191,7 @@ There is exactly one wrapper, `headed-chromium`:
 
 | | `headed-chromium` |
 |---|---|
-| For | agent browser testing against **our own** apps |
+| For | driving apps in a real, unheadlessable browser |
 | CDP | yes, `CDP_PORT` (default 9222) |
 | Profile | `BROWSER_PROFILE_DIR`, default `/mnt/data/browser/default` |
 
@@ -214,8 +207,9 @@ BROWSER_PROFILE_DIR=/mnt/data/browser/agent2 CDP_PORT=9223 headed-chromium
 - Profiles live on the data disk, so anything logged in survives a rebuild.
 - Each headed Chromium costs ~530 MB (measured); a browser sitting on a busy page
   also costs about a full core, so park it on `about:blank` or stop it.
-- Give each agent its own `BROWSER_PROFILE_DIR` and `CDP_PORT` — one profile
-  shared between identities means one cookie jar and one fingerprint for both.
+- Give each app or identity its own `BROWSER_PROFILE_DIR` and `CDP_PORT` — one
+  profile shared between identities means one cookie jar and one fingerprint for
+  both.
 
 **An app with a logged-in account brings its own wrapper.** This repo knows
 nothing about accounts: no timezone pinned to someone's history, no extension
@@ -245,101 +239,6 @@ through the same tunnel (`BROWSER_CMD=social-chromium ./run browser`).
 
 ---
 
-## Phone notifications (Termux)
-
-Agents can ping your phone ("build finished", "needs your input") via
-`notify-phone "<title>" "<message>" [extra flags]`. The VM is the SSH *client* —
-it dials **out** to Termux's own `sshd` on your phone over the tailnet and runs
-`termux-notification` remotely. No inbound changes on the VM, no forwarding, no
-Tailscale SSH.
-
-```sh
-notify-phone "Build" "finished on cloud-agent"
-notify-phone "Tests" "3 failed — tap to open" \
-  --action "android.intent.action.VIEW" \
-  --icon-path /sdcard/Download/ic_fail.png
-```
-
-Any `termux-notification` flag passes straight through. The wrapper `%q`-escapes
-every argument so multi-word and special-character text survives ssh's
-space-joining intact. If the phone is down, `notify-phone` **fails fast** (~5s,
-non-zero exit) — append `|| true` if notifications are best-effort.
-
-The dedicated ed25519 keypair and `known_hosts` live on the persistent data disk
-(`/mnt/data/ssh-termux/`), so a VM rebuild doesn't require re-adding the key.
-
-**One-time setup on the phone (Termux), by hand:**
-
-```sh
-pkg install openssh termux-api termux-services python
-sshd             # starts sshd right now, on port 8022
-whoami           # note this — it's TF_VAR_termux_ssh_user
-```
-
-Termux is an unprivileged Android app, so it **cannot bind port 22** — `sshd`
-listens on **8022** (hence the `TF_VAR_termux_ssh_port` default). No password —
-auth is by key only.
-
-```sh
-# Fully restart Termux first (swipe from recents) — termux-services' runsvdir
-# starts from ~/.profile.
-sv-enable sshd
-sv up sshd
-```
-
-Also on the phone: install **Termux:Boot** and open it once (sshd won't survive a
-phone reboot otherwise), **exempt Termux from battery optimization**
-(Settings → Apps → Termux → Battery → Unrestricted), and on Android 13+ grant
-**Termux:API the notification permission**. `python` is only needed for the
-hardening parser below.
-
-Then, after `./run apply`, grab the generated public key from the VM
-(`cat /mnt/data/ssh-termux/id_ed25519.pub`) and append it to
-`~/.ssh/authorized_keys` in Termux.
-
-Configure via `TF_VAR_termux_host` (default `galaxy-s24-ultra`),
-`TF_VAR_termux_ssh_port` (default `8022`), and `TF_VAR_termux_ssh_user` (from
-`whoami`). The feature is only provisioned when **both** host and user are set.
-
-### Hardening the phone key (optional, recommended)
-
-By default the key can open a full shell on your phone. To lock it to
-notifications only, use a **forced command** on the phone side. The parser is
-python's `shlex` — pure parsing, **no shell eval** — so injection is impossible
-by construction.
-
-`~/bin/notify-only` in Termux (`chmod +x`):
-
-```python
-#!/data/data/com.termux/files/usr/bin/python3
-# Forced-command target for the notify-phone key: run ONLY termux-notification,
-# with any flags. sshd puts the original command in SSH_ORIGINAL_COMMAND as one
-# string; shlex splits it (no eval), so metacharacters in the message are data.
-import os, shlex, sys
-
-BIN = "/data/data/com.termux/files/usr/bin/termux-notification"
-
-raw = os.environ.get("SSH_ORIGINAL_COMMAND", "")
-try:
-    argv = shlex.split(raw)
-except ValueError as e:
-    sys.exit(f"refused: unbalanced quoting ({e})")
-if not argv or argv[0] != "termux-notification":
-    sys.exit("refused: this key may only run termux-notification")
-os.execv(BIN, argv)
-```
-
-and in `~/.ssh/authorized_keys` use this *instead of* the plain pubkey:
-
-```
-restrict,command="$HOME/bin/notify-only" ssh-ed25519 AAAA... sagi@cloud-agent-notify-phone
-```
-
-`restrict` additionally disables PTY, port/agent forwarding, X11 and user-rc for
-this key. Nothing on the VM side changes.
-
----
-
 ## Teardown
 
 **Full wipe by default** — destroys the VM + data disk, deletes the GCS state
@@ -353,8 +252,8 @@ bucket, and removes local Terraform artifacts:
 ```
 
 > **`cleanup` is not "reset".** Answering `y` to all three prompts deletes the
-> data disk — everything under `/mnt/data`, the tailnet node identity, and the
-> notify keypair — plus the state bucket, which is the only record of what exists.
+> data disk — everything under `/mnt/data` and the tailnet node identity — plus
+> the state bucket, which is the only record of what exists.
 > There is no undo. If your goal is "make it work again", that is `./run up`; if
 > it is "throw the VM away but keep my data", that is:
 >
@@ -408,19 +307,9 @@ gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp default
 
 ## Measuring the box
 
-Sizing decisions in this repo come from measurement, not opinion, and the tools
-are checked in so a claim can be re-checked. The full numbers and their caveats:
-[`measurements.md`](measurements.md). The toolchain that produced them
-is mapped in [`capabilities.md`](capabilities.md).
-
-```sh
-./run measure --seconds 120 --label "two agents"   # PSS by user and kind, peaks
-./run lsp-probe --cmd "tsgo --lsp --stdio" --root /mnt/data/repos/ts --quiet 30
-```
-
-`measure` reports **PSS**, not RSS, because per-client isolation means several
-copies of the same binaries sharing pages, and RSS overestimates in the direction
-that costs money.
+The numbers behind the sizing and browser decisions — boot time, browser memory,
+zram, fingerprint, latency, cost — are measured, not guessed, and live in
+[`measurements.md`](measurements.md).
 
 ---
 
@@ -459,11 +348,11 @@ that costs money.
   fails the apply if any `$$` survives — and always verify against the *rendered*
   script (`gcloud compute instances describe`).
 - **`ssh host cmd arg1 arg2` joins argv with spaces and the remote shell
-  re-parses it.** Quoting is not preserved. `notify-phone` uses `printf %q` +
-  `shlex.split`; `provision-phone.sh` embeds `%q`-escaped assignments.
+  re-parses it.** Quoting is not preserved. Escape each argument with
+  `printf %q` when the remote command carries user text.
 - **`ssh` eats stdin.** Piping a script to `bash -s` over ssh and then calling
   `ssh` inside it makes the inner ssh consume the rest of the script. Use `ssh -n`
-  or `</dev/null`; `notify-phone` passes `-n`.
+  or `</dev/null`.
 - **Non-interactive ssh has a minimal `PATH`.** `swapon`/`zramctl` live in
   `/usr/sbin`; `ssh host swapon --show` fails with "command not found". Export the
   full PATH when probing.
@@ -494,12 +383,12 @@ that costs money.
 - **Never delete the state bucket or `backend.tf` while resources exist.** They
   are the only pointers to live infrastructure. `cleanup.sh` verifies with
   `gcloud` that the instance and disk are really gone before either wipe.
-- **Measurement harness traps** (from the sizing work): `pkill -f` patterns must
-  be anchored (`^/usr/local/bin/opencode serve`) or they match the killer's own
-  command line and kill the shell running it; every `curl` health check needs
-  `--connect-timeout --max-time` or a half-open server hangs the whole run; the
-  sampler prints peaks on SIGTERM so a short workload doesn't lose its numbers;
-  detached processes must redirect all three fds or ssh waits on the channel.
+- **Measurement harness traps**: `pkill -f` patterns must be anchored or they
+  match the killer's own command line and kill the shell running it; every `curl`
+  health check needs `--connect-timeout --max-time` or a half-open server hangs
+  the whole run; the sampler prints peaks on SIGTERM so a short workload doesn't
+  lose its numbers; detached processes must redirect all three fds or ssh waits
+  on the channel.
 - **`./run browser` failing with `Can't open display` is a LOCAL problem, not the
   box.** A tmp cleaner can delete XWayland's socket from `/tmp/.X11-unix` while
   the Xwayland process keeps running: the socket stays bound in the kernel (still
@@ -515,7 +404,7 @@ that costs money.
   entry from a previous build reads as a VM fault. `up` and `verify` clear it for
   you (`ssh-keygen -R cloud-agent`).
 - **Tailscale SSH check mode demands a browser confirmation.** A non-interactive
-  session (verify, rekey, measure) can trigger an "additional check" prompt —
+  session (verify, rekey) can trigger an "additional check" prompt —
   once per session, not per host. Run `./run ssh` once and follow the URL; the
   scripts warn instead of failing. `./run ssh` deliberately skips BatchMode so
   those prompts work.
@@ -525,8 +414,7 @@ that costs money.
   `reset-failed` clears the bogus entry; `browser.sh` does both.
 - **A backgrounded process over ssh dies with the session** unless it gets
   `setsid` + `nohup` + closed stdin + `disown` — all four, or the process is a
-  child of the ssh session. `browser.sh` and the measurement harness use all
-  four.
+  child of the ssh session. `browser.sh` uses all four.
 - **`instance_status` distinguishes "absent" from "unknown".** "unknown" means
   gcloud could not read the VM at all — almost always a credential mismatch, not a
   deleted VM. `up` refuses to guess there, so it cannot build a second VM while

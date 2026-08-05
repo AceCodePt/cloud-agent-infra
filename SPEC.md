@@ -15,34 +15,31 @@ The other places, so nothing is duplicated here:
 - **[`docs/measurements.md`](docs/measurements.md)** — the evidence the decisions
   rest on.
 
-The LinkedIn reader (a real account, the extension/controller, feed harvesting)
-is NOT a goal of this repo. It is the first app this infrastructure will host,
-and it lives in its own repo:
-[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader).
+The agent layer — opencode sessions on this box, per-client accounts, and phone
+approval — is **not** a goal of this repo. It is a consumer of the infrastructure
+here and lives in its own repo: [`~/stuff/phone-approval`](../phone-approval).
 
 ---
 
-## Goals
+## Goal
 
-Numbered in the order they were first stated, which is NOT their priority.
-**Goals 2 and 3 are absent on purpose** — they were the LinkedIn reader and its
-Meta extension, and they now live in
-[`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader). The
-numbering is kept because `docs/decisions/` refers to it.
+A reliable, reproducible cloud box, reachable **only over Tailscale** from any
+other device on the tailnet (laptop or any other tailnet node), that can be
+managed and repaired remotely without public exposure.
 
-| # | Goal | Priority | State |
-|---|---|---|---|
-| 4 | Agentic workflows for client companies: multiple agents, isolated per client, with agent-driven browser testing | **PRIMARY — the reason the machine exists** | Runner installed and measured; **isolation + concurrency decided (Unix user per client, 5–10 clients), no per-client accounts built yet** |
-| 1 | A reliable, reproducible cloud box reachable only over Tailscale, able to notify the phone | Substrate for the above | **Built and verified** |
+| Goal | Priority | State |
+|---|---|---|
+| A reliable, reproducible cloud box reachable only over Tailscale, with a virtual-display browser you can drive by hand from another device | **The reason the machine exists** | **Built and verified** |
 
-The box exists to run many agents, one Unix user per client. Everything else —
-browser testing, notifications, the apps that use them — is a consumer of that.
+The box is substrate. Apps that need always-on hosting, a browser with a logged-in
+account, or an agent runner provision themselves onto this box — this repo knows
+nothing about any of them.
 
 ---
 
 ## What exists
 
-Asserted by `./run verify` — 31 checks, passing — and it has survived a full
+Asserted by `./run verify` — 17 checks, passing — and it has survived a full
 `cleanup --yes` + rebuild cycle.
 
 **The box**
@@ -53,8 +50,6 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
 - Tailscale one-off auth keys minted via API and validated before every apply
 - Tailscale state bind-mounted onto the data disk — survives instance
   replacement, but not data-disk destruction
-- Phone notifications end to end: `notify-phone` → Termux, restricted
-  forced-command key, atomic re-key with rollback
 - Two-phase boot (`terraform/startup.tf`): phase A reaches the tailnet in ~84s,
   phase B installs the rest out of band
 - `./run up` — idempotent convergence, never destructive
@@ -63,8 +58,6 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
 **On the box** (all from phase B, so all reproducible)
 
 - CLI: `git`, `stow`, `tmux`, `neovim`, `python3-pip`, `build-essential`
-- Node.js 24 from the NodeSource apt repo
-- **opencode, pinned to `1.18.11`**, one root-owned binary in `/usr/local/bin`
 - Xvfb `:99` + Chromium with one wrapper, `headed-chromium` (CDP, persistent
   profile). An app that needs a browser tied to a logged-in account deploys its
   own wrapper — this repo knows nothing about accounts.
@@ -73,53 +66,38 @@ Asserted by `./run verify` — 31 checks, passing — and it has survived a full
 
 ## What does not exist
 
-- **Goal 4 has no design.** No per-client Unix accounts, no container runtime, no
-  `gh`, no client checkouts. Isolation and concurrency are *decided* (Unix user
-  per client, 5–10 clients — see `docs/decisions/agents-and-sizing.md`) but
-  nothing is built. The runner binary being installed is not the same as goal 4
-  being started.
-- `/mnt/data` holds the browser profiles, Tailscale state, and the phone notify
-  key. Nothing else.
+- The agent runner (opencode), per-client accounts, and the phone approval loop.
+  These are the sibling [`~/stuff/phone-approval`](../phone-approval) repo's job;
+  it provisions itself onto this box over ssh.
+- `/mnt/data` holds the browser profiles and the Tailscale state. Nothing else.
 
 ---
 
 ## Open questions
 
-**1. What is goal 4, concretely?** Settled, in `docs/decisions/agents-and-sizing.md`:
-5–10 clients with ~2 simultaneously active agents; isolation is a **Unix user per
-client**; browser testing is **one shared browser, or a browser served over the
-tailnet from outside** (not one per agent); no resize, no migration — the box
-stays `e2-standard-2` on GCP. Still open: wiring the phone into an approval loop
-and re-measuring over a long real session. The `$154/yr` vs `$1,353/yr` question
-is answered: neither, at the current scale.
-
-**2. Client data residency.** Confirmed unrestricted today, so a German VPS is
+**1. Client data residency.** Confirmed unrestricted today, so a German VPS is
 allowed. Re-check if a client contract says otherwise — and note that at ~$19/mo
 per box, one-server-per-client becomes affordable isolation that GCP pricing
 forecloses.
 
-Break-glass on a non-GCP provider is also unresolved, but it is recorded with the
-parked migration decision in
-[`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md).
+**2. Provider migration.** Parked — see
+[`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md). The
+binding constraint is break-glass: GCP's IAP tunnel is the only non-Tailscale way
+into a box with zero public ingress, and Hetzner has no equivalent.
 
 ---
 
 ## Risks
 
-**Goal 4 — capacity**
+**Capacity.** The box is `e2-standard-2`. The numbers behind whether that holds
+for any particular workload — idle floor, browser memory, how the box degrades
+under load — are in `docs/measurements.md`. Slow is acceptable; unreachable is
+not, and there is no public inbound to fall back on. `verify.sh` is the tripwire.
 
-The box saturates CPU at roughly two actively-working agents on 2 vCPU, but a
-concurrency ramp showed it **degrades gracefully, never halts**: 100% completion
-up to 24 concurrent sessions on one server, and 3 separate per-client servers
-(6/6 rounds) at 2952 MB peak PSS with ~4.6 GB free — see
-`docs/measurements.md`. Memory is not the binding constraint; CPU is, and slow
-is not halt.
-
-**Process**
-
-This project has drifted before: a session that began with a revoked Tailscale
-key ended up planning a provider migration, via zram, Thorium, Openbox and hosted
-CDP, while the primary goal stayed at zero lines. Three recommendations were
-reversed inside twenty minutes because each was made against a locally-scoped
-question rather than a stated goal. Hence the priority column above, `TASK.md`'s
-ordering rule, and `docs/decisions/` holding a single answer per question.
+**Process.** This project has drifted before: a session that began with a revoked
+Tailscale key ended up planning a provider migration, via zram, Thorium, Openbox
+and hosted CDP, while the original goal stayed at zero lines. Three
+recommendations were reversed inside twenty minutes because each was made against
+a locally-scoped question rather than a stated goal. Hence the goal above,
+`TASK.md`'s ordering rule, and `docs/decisions/` holding a single answer per
+question.

@@ -135,14 +135,6 @@ failed) warn "the deferred package install FAILED — the box is reachable but t
   browser stack is missing. Diagnose:  ./run ssh journalctl -u agent-packages -n 50" ;;
 esac
 
-load_phone_config
-if [[ -n "$PHONE_HOST" && -n "$PHONE_USER" ]]; then
-  step "re-key the phone to the VM's current notify pubkey"
-  "$SCRIPT_DIR"/provision-phone.sh
-else
-  converged "phone notifications not configured (skipping)"
-fi
-
 step "verify"
 set +e
 "$SCRIPT_DIR"/verify.sh "${VERIFY_ARGS[@]}"

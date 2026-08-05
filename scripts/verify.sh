@@ -3,7 +3,6 @@ set -uo pipefail
 # shellcheck source=scripts/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_config
-load_phone_config
 
 QUICK=false
 [[ "${1:-}" == "--quick" ]] && QUICK=true
@@ -92,29 +91,16 @@ mountpoint -q /mnt/data && echo "data_mounted=yes" || echo "data_mounted=no"
 echo "browser_owner=$(stat -c %U /mnt/data/browser 2>/dev/null || echo missing)"
 [ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
   && echo "chromium_args=ok" || echo "chromium_args=broken"
-[ "$(tail -1 /usr/local/bin/notify-phone)" = 'exec ssh -n termux-phone "$CMD$ARGS"' ] \
-  && echo "notify_args=ok" || echo "notify_args=broken"
-grep -q '\$\$' /usr/local/bin/notify-phone /usr/local/bin/headed-chromium \
+[ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
+  && echo "chromium_args=ok" || echo "chromium_args=broken"
+grep -q '\$\$' /usr/local/bin/headed-chromium \
   && echo "dollar_bug=present" || echo "dollar_bug=absent"
 
-echo "notify_key_fpr=$(ssh-keygen -lf /mnt/data/ssh-termux/id_ed25519.pub 2>/dev/null | awk '{print $2}')"
 echo "passwd_state=$(sudo passwd -S "$(id -un)" 2>/dev/null | awk '{print $2}')"
 sudo sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' \
   && echo "sshd_passauth=off" || echo "sshd_passauth=ON"
 sudo sshd -T 2>/dev/null | grep -qx 'permitrootlogin no' \
   && echo "sshd_rootlogin=off" || echo "sshd_rootlogin=ON"
-
-if notify-phone "verify.sh" "state verified $(date -u +%H:%M:%SZ)" --id verify-sh >/dev/null 2>&1 </dev/null; then
-  echo "notify_e2e=ok"
-else
-  echo "notify_e2e=fail"
-fi
-
-if ssh -n -o BatchMode=yes -o ConnectTimeout=10 termux-phone id >/dev/null 2>&1; then
-  echo "notify_key_shell=ALLOWED"
-else
-  echo "notify_key_shell=refused"
-fi
 VMEOF
 )"
 
@@ -133,64 +119,10 @@ else
   assert "/mnt/data is mounted" "$(fact "$VM_FACTS" data_mounted)" "yes"
   assert "/mnt/data/browser owned by $SSH_USER" "$(fact "$VM_FACTS" browser_owner)" "$SSH_USER"
   assert "headed-chromium passes arguments through" "$(fact "$VM_FACTS" chromium_args)" "ok"
-  assert "notify-phone builds its command correctly" "$(fact "$VM_FACTS" notify_args)" "ok"
-  assert "no '\$\$' in the generated wrappers" "$(fact "$VM_FACTS" dollar_bug)" "absent"
+  assert "no '\$\$' in the generated wrapper" "$(fact "$VM_FACTS" dollar_bug)" "absent"
   assert "$SSH_USER password is locked" "$(fact "$VM_FACTS" passwd_state)" "L"
   assert "sshd PasswordAuthentication off" "$(fact "$VM_FACTS" sshd_passauth)" "off"
   assert "sshd PermitRootLogin off" "$(fact "$VM_FACTS" sshd_rootlogin)" "off"
-  assert "notify-phone reaches the phone end-to-end" "$(fact "$VM_FACTS" notify_e2e)" "ok"
-  assert "notify key is refused a shell on the phone" "$(fact "$VM_FACTS" notify_key_shell)" "refused"
-fi
-
-section "Phone state"
-if [[ -z "$PHONE_HOST" || -z "$PHONE_USER" ]]; then
-  skip "phone checks (termux_host/termux_ssh_user not configured)"
-else
-  PHONE_FACTS="$(ssh_phone 'bash -s' 2>/dev/null <<'PHEOF'
-set -u
-echo "reachable=yes"
-[ -x "$HOME/bin/notify-only" ] && echo "parser=yes" || echo "parser=no"
-[ -x "$HOME/.termux/boot/start-sshd.sh" ] && echo "bootscript=yes" || echo "bootscript=no"
-TPREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
-[ -e "$TPREFIX/var/service/sshd/down" ] && echo "downfile=present" || echo "downfile=absent"
-pm list packages 2>/dev/null | grep -q com.termux.boot && echo "bootapp=yes" || echo "bootapp=no"
-pm list packages 2>/dev/null | grep -q com.termux.api && echo "apiapp=yes" || echo "apiapp=no"
-command -v termux-notification >/dev/null && echo "notifybin=yes" || echo "notifybin=no"
-AK="$HOME/.ssh/authorized_keys"
-echo "notify_keys=$(ssh-keygen -lf "$AK" 2>/dev/null | grep -c -- '-notify-phone')"
-echo "notify_fpr=$(ssh-keygen -lf "$AK" 2>/dev/null | grep -- '-notify-phone' | awk '{print $2}' | head -1)"
-echo "other_keys=$(ssh-keygen -lf "$AK" 2>/dev/null | grep -vc -- '-notify-phone')"
-echo "restrict_lines=$(grep -c 'restrict,command=' "$AK" 2>/dev/null)"
-PHEOF
-  )"
-
-  if [[ "$(fact "$PHONE_FACTS" reachable)" != "yes" ]]; then
-    bad "cannot SSH to the phone ($PHONE_USER@$PHONE_HOST:$PHONE_PORT)"
-  else
-    ok "SSH to the phone works"
-    assert "forced-command parser installed" "$(fact "$PHONE_FACTS" parser)" "yes"
-    assert "termux-notification available" "$(fact "$PHONE_FACTS" notifybin)" "yes"
-    assert "Termux:API app installed" "$(fact "$PHONE_FACTS" apiapp)" "yes"
-    assert "Termux:Boot app installed" "$(fact "$PHONE_FACTS" bootapp)" "yes"
-    assert "boot script installed" "$(fact "$PHONE_FACTS" bootscript)" "yes"
-    assert "runit 'down' file cleared" "$(fact "$PHONE_FACTS" downfile)" "absent"
-    assert "exactly one notify key authorised" "$(fact "$PHONE_FACTS" notify_keys)" "1"
-    assert "notify key is hardened with restrict,command=" "$(fact "$PHONE_FACTS" restrict_lines)" "1"
-
-    if [[ "$(fact "$PHONE_FACTS" other_keys)" -ge 1 ]]; then
-      ok "your own key(s) still present ($(fact "$PHONE_FACTS" other_keys))"
-    else
-      bad "no non-notify key left on the phone — you would lose shell access"
-    fi
-
-    VM_FPR="$(fact "$VM_FACTS" notify_key_fpr)"
-    PH_FPR="$(fact "$PHONE_FACTS" notify_fpr)"
-    if [[ -z "$VM_FPR" ]]; then
-      skip "key match (could not read the VM's pubkey)"
-    else
-      assert "phone trusts the VM's CURRENT key" "$PH_FPR" "$VM_FPR"
-    fi
-  fi
 fi
 
 section "Browser stack (sidecar)"

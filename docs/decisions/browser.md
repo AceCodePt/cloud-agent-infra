@@ -13,11 +13,11 @@ Measurements behind these are in [`../measurements.md`](../measurements.md).
 ## One wrapper, and the app brings its own — **Made**
 
 `headed-chromium` is a real headed Chromium on the virtual display with CDP and a
-persistent profile, for agents testing **our own** apps:
+persistent profile, for driving apps in a browser that must not be headless:
 
 | | `headed-chromium` |
 |---|---|
-| For | agent browser testing against our own apps |
+| For | driving apps in a real, unheadlessable browser |
 | CDP | yes, `CDP_PORT` (default 9222) |
 | Profile | `BROWSER_PROFILE_DIR`, default `/mnt/data/browser/default` |
 

@@ -16,33 +16,14 @@ Lifecycle
   plan             Show the Terraform plan
   apply            Create/update the infrastructure
   wait [--packages] Block until the VM is on the tailnet and its startup script
-                   finished; --packages also waits for the deferred browser stack
-  phone            Re-key the phone to the VM's CURRENT notify pubkey (idempotent)
+                   finished; --packages also waits for the deferred package install
   verify [--quick] Assert the entire end state (non-zero exit on any drift)
   verify-browser   Just the browser stack (chromium/Xvfb/zram/CDP). Runs as a
                    sidecar inside verify; standalone for when phase B was still
                    installing and verify SKIPped it.
-  rebuild          FROM SCRATCH: cleanup -> bootstrap -> apply -> wait -> phone -> verify
+  rebuild          FROM SCRATCH: cleanup -> bootstrap -> apply -> wait -> verify
                    Destroys the data disk. Use `up` unless you mean that.
   cleanup [flags]  Tear down + delete the tailnet node (--yes, --keep-bucket, --keep-files, --force)
-
-Agents
-  measure [args]   Sample the box's real resource use and report peaks, so
-                   sizing is a measurement rather than an opinion. Uses PSS (not
-                   RSS) because per-client isolation means several copies of the
-                   same binaries sharing pages. --seconds N --interval S
-                   --label X --json
-  lsp-probe [args] Measure what one language server costs on a real repo. The
-                   LSP, not opencode, is the dominant per-client cost, and it
-                   needs no model or API key to measure. --cmd "vtsls --stdio"
-                   --root DIR --ext .ts --files N --settle S --quiet S --json
-
-                   To measure a REAL agent session rather than an idle one, the
-                   drivers in scripts/ (drive-agent-loop.mjs, agent-stress.mjs,
-                   box-*.sh) are hand-driven over ssh — deliberately not wired in
-                   here, because each needs a running `opencode serve` with a
-                   provider connected. See docs/measurements.md — the concurrency
-                   ramp (slow-but-alive, never halt) lives there.
 
 Browser
   browser [url]   Reach the box's virtual display and drive the SHARED browser
@@ -89,7 +70,6 @@ apply)
   tf apply "$@"
   ;;
 wait) scripts/wait-ready.sh "$@" ;;
-phone) scripts/provision-phone.sh "$@" ;;
 verify) scripts/verify.sh "$@" ;;
 verify-browser) scripts/verify-browser.sh "$@" ;;
 cleanup) scripts/cleanup.sh "$@" ;;
@@ -100,7 +80,6 @@ rebuild)
     "scripts/bootstrap.sh" \
     "APPLY" \
     "scripts/wait-ready.sh" \
-    "scripts/provision-phone.sh" \
     "scripts/verify.sh"; do
     printf '\n\033[1m=== %s\033[0m\n' "$step"
     if [[ "$step" == "APPLY" ]]; then
@@ -112,18 +91,6 @@ rebuild)
     fi
   done
   printf '\n\033[1;32mRebuild complete and verified.\033[0m\n'
-  ;;
-
-measure)
-  load_config
-  ssh_vm "cat > /tmp/measure-resources.py" <scripts/measure-resources.py
-  ssh_vm "sudo -n python3 /tmp/measure-resources.py $(printf '%q ' "$@")"
-  ;;
-
-lsp-probe)
-  load_config
-  ssh_vm "cat > /tmp/lsp-probe.mjs" <scripts/lsp-probe.mjs
-  ssh_vm "node /tmp/lsp-probe.mjs $(printf '%q ' "$@")"
   ;;
 
 browser) scripts/browser.sh "$@" ;;
