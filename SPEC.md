@@ -59,7 +59,8 @@ Asserted by `./run verify` — 18 checks, passing — and it has survived a full
 
 **On the box** (all from phase B, so all reproducible)
 
-- CLI: `git`, `stow`, `tmux`, `neovim`, `python3-pip`, `build-essential`
+- CLI: `git`, `gh`, `stow`, `tmux`, `neovim`, `python3-pip`, `build-essential`,
+  `fzf`, `direnv`, `mise` (go installed through mise, per the account's global config)
 - Xvfb `:99` + Chromium with one wrapper, `headed-chromium` (CDP, persistent
   profile). An app that needs a browser tied to a logged-in account deploys its
   own wrapper — this repo knows nothing about accounts.

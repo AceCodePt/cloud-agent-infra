@@ -116,6 +116,13 @@ systemctl is-active exit-node-watch 2>/dev/null | grep -qx active \
   && echo "watchdog=active" || echo "watchdog=inactive"
 [ -x /usr/local/sbin/exit-node-watch ] \
   && echo "watchdog_script=present" || echo "watchdog_script=missing"
+
+for t in fzf direnv mise; do
+  command -v "$t" >/dev/null 2>&1 \
+    && echo "${t}=present" || echo "${t}=missing"
+done
+[ -x "$HOME/.local/share/mise/shims/go" ] \
+  && echo "go_shim=present" || echo "go_shim=missing"
 VMEOF
 )"
 
@@ -140,6 +147,10 @@ else
   assert "sshd PermitRootLogin off" "$(fact "$VM_FACTS" sshd_rootlogin)" "off"
   assert "exit-node watchdog running" "$(fact "$VM_FACTS" watchdog)" "active"
   assert "exit-node watchdog script present" "$(fact "$VM_FACTS" watchdog_script)" "present"
+  assert "fzf installed" "$(fact "$VM_FACTS" fzf)" "present"
+  assert "direnv installed" "$(fact "$VM_FACTS" direnv)" "present"
+  assert "mise installed" "$(fact "$VM_FACTS" mise)" "present"
+  assert "go installed via mise" "$(fact "$VM_FACTS" go_shim)" "present"
 fi
 
 section "Browser stack (sidecar)"

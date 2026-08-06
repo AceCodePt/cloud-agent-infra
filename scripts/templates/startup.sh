@@ -287,14 +287,30 @@ echo "=== agent packages $(date -u) ==="
 $APT update
 
 echo ">> wave 1: CLI tools"
-$APT install -y git stow tmux neovim python3-pip zsh
+$APT install -y git stow tmux neovim python3-pip zsh gh fzf direnv gpg
 
 # The account phase A created. Pinned by name (not a uid heuristic) so a
-# cloud-init default user on a non-GCP image cannot hijack the chsh.
+# cloud-init default user on a non-GCP image cannot hijack the usermod.
+# usermod -s writes /etc/passwd directly; chsh goes through PAM, which rejects
+# the change because the root account is password-locked ("Authentication token
+# is no longer valid") — so never use chsh here.
 AGENT_USER="__USER__"
 if [ -n "$AGENT_USER" ] && command -v zsh >/dev/null 2>&1; then
-  chsh -s /usr/bin/zsh "$AGENT_USER" || echo ">> chsh skipped (account state)"
+  usermod -s /usr/bin/zsh "$AGENT_USER"
   echo ">> default shell for $AGENT_USER -> zsh"
+fi
+
+echo ">> mise (version manager, via Debian extrepo)"
+if ! command -v mise >/dev/null 2>&1; then
+  $APT install -y extrepo
+  extrepo enable mise
+  $APT update
+fi
+$APT install -y mise
+
+if [ -n "$AGENT_USER" ] && command -v mise >/dev/null 2>&1; then
+  echo ">> go@latest for $AGENT_USER via mise"
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" mise use -g go@latest
 fi
 
 echo ">> wave 2: upgrade + headed-browser stack"
