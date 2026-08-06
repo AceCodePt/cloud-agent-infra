@@ -12,6 +12,9 @@ Usage: ./run <command> [args]
                    and never destroys anything — safe to run any time.
 
 Lifecycle
+  setup [gcp|hetzner]
+                   What you need per provider (API keys, ADC, Object Storage),
+                   with what's already configured in config.env checked off
   bootstrap        State bucket + backend.tf + terraform init + mint a one-off auth key
   plan             Show the Terraform plan
   apply            Create/update the infrastructure
@@ -59,6 +62,7 @@ help | -h | --help) usage ;;
 
 up) scripts/up.sh "$@" ;;
 
+setup) scripts/setup.sh "$@" ;;
 bootstrap) scripts/bootstrap.sh "$@" ;;
 plan)
   load_config

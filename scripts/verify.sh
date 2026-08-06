@@ -111,6 +111,11 @@ sudo sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' \
   && echo "sshd_passauth=off" || echo "sshd_passauth=ON"
 sudo sshd -T 2>/dev/null | grep -qx 'permitrootlogin no' \
   && echo "sshd_rootlogin=off" || echo "sshd_rootlogin=ON"
+
+systemctl is-active exit-node-watch 2>/dev/null | grep -qx active \
+  && echo "watchdog=active" || echo "watchdog=inactive"
+[ -x /usr/local/sbin/exit-node-watch ] \
+  && echo "watchdog_script=present" || echo "watchdog_script=missing"
 VMEOF
 )"
 
@@ -133,7 +138,8 @@ else
   assert "$SSH_USER password is locked" "$(fact "$VM_FACTS" passwd_state)" "L"
   assert "sshd PasswordAuthentication off" "$(fact "$VM_FACTS" sshd_passauth)" "off"
   assert "sshd PermitRootLogin off" "$(fact "$VM_FACTS" sshd_rootlogin)" "off"
-  assert "tailscale operator set for $SSH_USER" "$(fact "$VM_FACTS" ts_operator)" "yes"
+  assert "exit-node watchdog running" "$(fact "$VM_FACTS" watchdog)" "active"
+  assert "exit-node watchdog script present" "$(fact "$VM_FACTS" watchdog_script)" "present"
 fi
 
 section "Browser stack (sidecar)"

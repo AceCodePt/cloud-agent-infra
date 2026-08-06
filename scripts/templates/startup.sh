@@ -150,6 +150,77 @@ fi
 # shell — but this script runs as root, so name the user explicitly.
 sudo tailscale set --operator="$USER_NAME" \
   || echo ">> tailscale set --operator failed (tailscale may not be up yet)"
+tailscale set --exit-node=auto:any \
+  || echo ">> tailscale set --exit-node=auto:any failed (tailscale may not be up yet)"
+
+# --- exit-node watchdog: probe egress, reset the exit node on failure, heal to auto ---
+cat > /usr/local/sbin/exit-node-watch <<'DAEMON'
+#!/usr/bin/env bash
+set -uo pipefail
+
+PROBE_URL="https://ifconfig.me"
+INTERVAL=5
+
+note() {
+  echo "exit-node-watch: $*"
+  logger -t exit-node-watch "$*"
+}
+
+online_exit_node() {
+  tailscale status --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for p in d.get("Peer", {}).values():
+    if p.get("ExitNodeOption") and p.get("Online"):
+        print(p["DNSName"].split(".")[0])
+        sys.exit(0)
+sys.exit(1)
+' 2>/dev/null
+}
+
+while true; do
+  CURRENT="$(tailscale get exit-node 2>/dev/null || true)"
+
+  if [ -n "$CURRENT" ]; then
+    if ! curl -4s --max-time 5 -o /dev/null "$PROBE_URL" 2>/dev/null; then
+      note "egress probe failed (exit-node=$CURRENT); resetting exit node"
+      tailscale set --exit-node= || note "reset failed (rc=$?)"
+    fi
+  else
+    ONLINE="$(online_exit_node)"
+    if [ -n "$ONLINE" ]; then
+      note "exit node '$ONLINE' is online again; restoring auto exit node"
+      tailscale set --exit-node=auto:any || note "re-heal failed (rc=$?)"
+    fi
+  fi
+
+  sleep "$INTERVAL"
+done
+DAEMON
+chmod 755 /usr/local/sbin/exit-node-watch
+
+cat > /etc/systemd/system/exit-node-watch.service <<'UNIT'
+[Unit]
+Description=cloud-agent exit-node watchdog: probe egress, reset/re-heal exit node
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/exit-node-watch
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable exit-node-watch.service
+systemctl start exit-node-watch.service
 
 # --- virtual-display browser stack (phase B is deferred; this is the config) ---
 cat > /etc/systemd/system/xvfb.service <<'UNIT'

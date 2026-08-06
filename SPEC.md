@@ -39,7 +39,7 @@ nothing about any of them.
 
 ## What exists
 
-Asserted by `./run verify` — 17 checks, passing — and it has survived a full
+Asserted by `./run verify` — 18 checks, passing — and it has survived a full
 `cleanup --yes` + rebuild cycle.
 
 **The box**
