@@ -95,7 +95,7 @@ fi
 if ! id "$USER_NAME" >/dev/null 2>&1; then
   useradd -m -G sudo -s /bin/bash "$USER_NAME"
 fi
-echo '%sudo ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent-sudo
+echo "$USER_NAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/agent-sudo
 chmod 440 /etc/sudoers.d/agent-sudo
 
 # sshd hardening: this is what keeps the only "other way in" to a physical
@@ -269,6 +269,7 @@ exec chromium --no-first-run --no-default-browser-check \
   --ignore-gpu-blocklist --use-gl=angle --use-angle=gl \
   --window-size="${BROWSER_WINDOW_SIZE:-1920,1080}" \
   --remote-debugging-port="${CDP_PORT:-9222}" \
+  --remote-debugging-address=127.0.0.1 \
   --user-data-dir="${BROWSER_PROFILE_DIR:-/mnt/data/browser/default}" \
   "$@"
 CHROME
@@ -317,7 +318,23 @@ echo ">> wave 2: upgrade + headed-browser stack"
 $APT upgrade -y
 $APT install -y build-essential xvfb xauth chromium \
   fonts-liberation fonts-noto-core zram-tools \
-  x11vnc python3-venv libgl1-mesa-dri
+  x11vnc python3-venv libgl1-mesa-dri unattended-upgrades
+
+echo ">> unattended-upgrades: auto-install security/updates, never reboot"
+cat > /etc/apt/apt.conf.d/20auto-upgrades <<'UPR'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+UPR
+cat > /etc/apt/apt.conf.d/90-agent-unattended <<'UPU'
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+    "origin=Debian,codename=${distro_codename},label=Debian";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+UPU
+systemctl enable apt-daily-upgrade.timer
+systemctl start apt-daily-upgrade.timer
 
 echo "=== agent packages complete $(date -u) ==="
 PKGS

@@ -42,7 +42,7 @@ fi
 
 if [[ "$PROVIDER" == hetzner ]]; then
   OPEN="$(hz_public_ingress)"
-  assert "no INGRESS rule allows 0.0.0.0/0" "$OPEN" "none"
+  assert "no inbound firewall rule opens the server" "$OPEN" "none"
 else
   RENDERED="$(gcloud_instance describe --format='value(metadata.items)' 2>/dev/null)"
   if [[ -z "$RENDERED" ]]; then
@@ -98,8 +98,6 @@ export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH"
 echo "reachable=yes"
 mountpoint -q /mnt/data && echo "data_mounted=yes" || echo "data_mounted=no"
 echo "browser_owner=$(stat -c %U /mnt/data/browser 2>/dev/null || echo missing)"
-[ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
-  && echo "chromium_args=ok" || echo "chromium_args=broken"
 [ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
   && echo "chromium_args=ok" || echo "chromium_args=broken"
 grep -q '\$\$' /usr/local/bin/headed-chromium \

@@ -131,10 +131,11 @@ hz_live_resources() {
   printf '%s' "${live# }"
 }
 
-# Asserts the repo's "no public inbound" posture on Hetzner: no firewall rule
-# may allow ingress from 0.0.0.0/0. Prints exactly 'none' when the posture
-# holds; anything else fails the assertion. A server with NO firewall applied
-# is a violation (Hetzner default is all-inbound-open), not a pass.
+# Asserts the repo's "no public inbound" posture on Hetzner: the firewall must
+# have NO inbound rule at all (the applied posture is an empty rule set, so any
+# "in" rule is drift). Prints exactly 'none' when the posture holds; anything
+# else fails the assertion. A server with NO firewall applied is a violation
+# (Hetzner default is all-inbound-open), not a pass.
 hz_public_ingress() {
   local resp ids fw name
   resp="$(hz_server_json)"
@@ -146,9 +147,7 @@ hz_public_ingress() {
   while read -r fwid; do
     [[ -n "$fwid" ]] || continue
     fw="$(hz_api GET "/firewalls/$fwid")"
-    if printf '%s' "$fw" | jq -e '
-      .firewall.rules[]? | select(.direction == "in")
-      | select(.source_ips | index("0.0.0.0/0"))' >/dev/null 2>&1; then
+    if printf '%s' "$fw" | jq -e '.firewall.rules[]? | select(.direction == "in")' >/dev/null 2>&1; then
       name="$(printf '%s' "$fw" | jq -r '.firewall.name // "unknown"')"
       printf 'open rule on firewall %s' "$name"
       return 0
