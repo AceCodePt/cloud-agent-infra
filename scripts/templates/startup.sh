@@ -81,15 +81,17 @@ fi
 $APT update
 $APT install -y curl ca-certificates sudo
 if ! command -v tailscale >/dev/null 2>&1; then
-  echo ">> installing tailscale (install.sh fetched, sanity-checked, executed)"
+  echo ">> installing tailscale (install.sh fetched, checksum-pinned, executed)"
+  # Never execute an unvetted remote script: a compromised or rewritten upstream
+  # install.sh must be refused.
+  TS_INSTALL_SHA256="805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e"
   TS_INSTALL="$(mktemp)"
   if curl -fsSL https://tailscale.com/install.sh -o "$TS_INSTALL"; then
-    # Never run a remote script unvetted; the repo key still GPG-verifies what it installs.
-    if head -n1 "$TS_INSTALL" | grep -qE '^#!.*(ba)?sh' \
-        && grep -qiE 'pkgs\.tailscale\.com' "$TS_INSTALL"; then
+    if [ "$(sha256sum "$TS_INSTALL" | awk '{print $1}')" = "$TS_INSTALL_SHA256" ]; then
       bash "$TS_INSTALL"
     else
-      echo "!! tailscale install.sh failed sanity checks; refusing to execute"
+      echo "!! tailscale install.sh checksum mismatch (got $(sha256sum "$TS_INSTALL" | awk '{print $1}'))"
+      echo "!! refusing to execute; update TS_INSTALL_SHA256 if the upstream script legitimately changed"
     fi
   else
     echo "!! could not fetch tailscale install.sh"
@@ -140,7 +142,13 @@ HARD
 chmod 644 /etc/ssh/sshd_config.d/10-agent-hardening.conf
 
 systemctl enable --now ssh
-systemctl restart ssh
+# `set -e` would abort startup here — before the tailscale join — on a bad drop-in
+# (self-DoS), so a failed config test must not be fatal.
+if sshd -t 2>/dev/null; then
+  systemctl restart ssh
+else
+  echo "!! sshd -t failed; NOT restarting ssh (check sshd_config.d)"
+fi
 systemctl enable --now tailscaled
 
 # --- join the tailnet ---
@@ -226,7 +234,7 @@ while true; do
   CURRENT="$(tailscale get exit-node 2>/dev/null || true)"
 
   if [ -n "$CURRENT" ]; then
-    if ! curl -4s --max-time 5 -o /dev/null "$PROBE_URL" 2>/dev/null; then
+    if ! curl -4sf --max-time 5 -o /dev/null "$PROBE_URL" 2>/dev/null; then
       note "egress probe failed (exit-node=$CURRENT); resetting exit node"
       tailscale set --exit-node= || note "reset failed (rc=$?)"
     fi
@@ -339,6 +347,13 @@ $APT install -y git stow tmux neovim python3-pip zsh gh fzf direnv gpg
 # the change because the root account is password-locked ("Authentication token
 # is no longer valid") — so never use chsh here.
 AGENT_USER="__USER__"
+# Rendered with the raw config value, so a malformed account name must not reach
+# usermod/sudo -u.
+if [ -z "$AGENT_USER" ] || [ "$AGENT_USER" != "${AGENT_USER#-}" ] || \
+   [ -n "${AGENT_USER//[A-Za-z0-9._-]/}" ]; then
+  echo "!! invalid AGENT_USER '$AGENT_USER' (want ^[A-Za-z0-9._-]+$); skipping per-user setup"
+  AGENT_USER=""
+fi
 if [ -n "$AGENT_USER" ] && command -v zsh >/dev/null 2>&1; then
   usermod -s /usr/bin/zsh "$AGENT_USER"
   echo ">> default shell for $AGENT_USER -> zsh"
