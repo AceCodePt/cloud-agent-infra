@@ -5,9 +5,10 @@ What this repo can do, and how to reach it. The map between **commands**
 `README.md` is the entry point; `docs/operating.md` is the how-to; `docs/decisions/`
 is the why.
 
-The box is a GCE VM reached over Tailscale (`ssh <user>@cloud-agent`). Two places
-do work: **the workstation** (this repo) and **the box** (provisioned by phase B,
-or pushed over ssh). Every table below says which.
+The box is a Hetzner Cloud server reached over Tailscale
+(`ssh <user>@cloud-agent`). Two places do work: **the workstation** (this repo)
+and **the box** (provisioned by phase B, or pushed over ssh). Every table below
+says which. (`PROVIDER` in `config.env` selects the cloud: `hetzner` or `gcp`.)
 
 ---
 
@@ -28,7 +29,7 @@ or pushed over ssh). Every table below says which.
 | `./run verify-browser [--quick]` | Browser stack only (sidecar; `verify` runs it) | `scripts/verify-browser.sh` |
 | `./run rebuild` | `cleanup → bootstrap → apply → wait → verify`. **Destroys the data disk** | multiple |
 | `./run cleanup [--yes --keep-*]` | Tear down + delete tailnet node. Full wipe by default | `scripts/cleanup.sh` |
-| `./run bootstrap` | State bucket + `backend.tf` + `terraform init` + mint auth key | `scripts/bootstrap.sh` |
+| `./run bootstrap` | `terraform init` + mint auth key (GCP path: also GCS state bucket + `backend.tf`) | `scripts/bootstrap.sh` |
 
 ### Browser — reach the box's display, by hand
 
@@ -56,7 +57,7 @@ the defaults.
 | Command | What it does |
 |---|---|
 | `./run ssh [args]` | Interactive SSH to the box over Tailscale |
-| `./run tf <args>` | Raw terraform in `terraform/` (`./run tf state list`) |
+| `./run tf <args>` | Raw terraform in `terraform/<provider>/` (`./run tf state list`) |
 | `./run fmt` / `validate` / `check` | Format / validate + `bash -n` / validate + verify |
 
 `./run validate` runs `terraform validate` with `-backend=false` on a clean

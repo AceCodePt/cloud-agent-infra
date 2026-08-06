@@ -27,12 +27,20 @@ while :; do
   elapsed=$(($(date +%s) - START))
   if [[ "$elapsed" -gt "$TIMEOUT" ]]; then
     echo >&2
-    die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+    if [[ "$PROVIDER" == hetzner ]]; then
+      die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+  Inspect the boot with the Hetzner Cloud web console (VNC) for $INSTANCE, or
+  connect its rescue system. A server that boots but never joins the tailnet
+  usually means the auth key was spent, revoked, expired, or missing (there is
+  no public inbound, so it just looks dead). Recover with: ./run rekey"
+    else
+      die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
   Inspect the boot with:
     gcloud compute instances get-serial-port-output $INSTANCE --zone $ZONE | tail -40
   A VM that boots but never joins the tailnet usually means the auth key was
   spent, revoked, expired, or missing (there is no public inbound, so it just
   looks dead). Recover with: ./run rekey"
+    fi
   fi
 
   if ! $joined; then
@@ -43,7 +51,11 @@ while :; do
     fi
   fi
 
-  SERIAL="$(gcloud_instance get-serial-port-output 2>/dev/null || true)"
+  if [[ "$PROVIDER" == hetzner ]]; then
+    SERIAL=""
+  else
+    SERIAL="$(gcloud_instance get-serial-port-output 2>/dev/null || true)"
+  fi
 
   if ! $complete; then
     if $joined && ssh_vm test -f /run/agent-startup-complete 2>/dev/null; then
@@ -56,7 +68,21 @@ while :; do
   fi
 
   if ! $packages_done; then
-    if grep -q 'agent packages complete' <<<"$SERIAL"; then
+    if [[ "$PROVIDER" == hetzner ]]; then
+      PKG="$(ssh_vm 'systemctl is-active agent-packages' 2>/dev/null || true)"
+      case "$PKG" in
+      active)
+        packages_done=true
+        note "deferred package install finished (${elapsed}s)"
+        ;;
+      failed)
+        warn "the deferred package install FAILED. The box is reachable, but the
+  browser stack is not installed. Diagnose with:
+    ./run ssh journalctl -u agent-packages -n 50"
+        $WAIT_PACKAGES || packages_done=true
+        ;;
+      esac
+    elif grep -q 'agent packages complete' <<<"$SERIAL"; then
       packages_done=true
       note "deferred package install finished (${elapsed}s)"
     elif grep -q 'agent-packages.service: Failed' <<<"$SERIAL"; then

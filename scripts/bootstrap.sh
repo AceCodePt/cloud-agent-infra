@@ -12,7 +12,11 @@ for arg in "$@"; do
   esac
 done
 
-echo ">> project=$PROJECT_ID region=$REGION bucket=$STATE_BUCKET"
+if [[ "$PROVIDER" == hetzner ]]; then
+  echo ">> provider=hetzner instance=$INSTANCE location=${TF_VAR_location:-nbg1}"
+else
+  echo ">> project=$PROJECT_ID region=$REGION bucket=$STATE_BUCKET"
+fi
 
 : "${TF_VAR_zone:?zone not set in config.env}"
 : "${TF_VAR_ssh_user:?ssh_user not set in config.env}"
@@ -53,6 +57,44 @@ if command -v tailscale >/dev/null 2>&1; then
     echo "   NOTE: never delete the node of a VM you intend to keep — it cannot"
     echo "   rejoin without a fresh auth key (netmap polls fail 404)."
   fi
+fi
+
+if [[ "$PROVIDER" == hetzner ]]; then
+  if [[ -n "$HZ_OBJECT_ACCESS_KEY" && -n "$HZ_OBJECT_SECRET_KEY" && -n "$HZ_OBJECT_BUCKET" ]]; then
+    echo ">> Hetzner Object Storage backend: bucket=$HZ_OBJECT_BUCKET region=$HZ_OBJECT_REGION"
+    cat > "$TF_DIR/backend.tf" <<EOF
+terraform {
+  backend "s3" {
+    bucket                       = "${HZ_OBJECT_BUCKET}"
+    key                          = "hetzner/terraform.tfstate"
+    region                       = "${HZ_OBJECT_REGION}"
+    endpoints = {
+      s3 = "https://${HZ_OBJECT_REGION}.your-objectstorage.com"
+    }
+    use_path_style              = true
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_metadata_api_check     = true
+    skip_requesting_account_id  = true
+  }
+}
+EOF
+    if [[ -f "$TF_DIR/terraform.tfstate" || -f "$TF_DIR/.terraform/terraform.tfstate" ]]; then
+      echo ">> migrating existing local state into the bucket"
+      tf init -migrate-state -force-copy -input=false
+    else
+      tf init -input=false
+    fi
+  else
+    echo ">> Hetzner: LOCAL Terraform state in $TF_DIR (git-ignored)."
+    echo "   For a durable backend, create a bucket in the Hetzner console"
+    echo "   (Project -> Object Storage -> Create Bucket) and set in config.env:"
+    echo "     HETZNER_OBJECT_ACCESS_KEY / HETZNER_OBJECT_SECRET_KEY / TF_STATE_BUCKET"
+    echo "   then re-run: ./run bootstrap"
+    tf init -input=false
+  fi
+  echo ">> Bootstrap complete. Next: ./run plan && ./run apply"
+  exit 0
 fi
 
 if ! gcloud auth application-default print-access-token >/dev/null 2>&1; then

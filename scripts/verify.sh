@@ -30,32 +30,41 @@ fact() { # fact <blob> <key>
 section "Cloud resources"
 STATUS="$(instance_status)"
 if [[ "$STATUS" == unknown ]]; then
-  bad "cannot read instance $INSTANCE from gcloud (credential problem, not the VM)"
-  printf '%s\n' "$(gcloud_identity_hint)"
+  if [[ "$PROVIDER" == hetzner ]]; then
+    bad "cannot read server $INSTANCE from the Hetzner API (token problem, not the VM)"
+  else
+    bad "cannot read instance $INSTANCE from gcloud (credential problem, not the VM)"
+    printf '%s\n' "$(gcloud_identity_hint)"
+  fi
 else
   assert "instance $INSTANCE is RUNNING" "$STATUS" "RUNNING"
 fi
 
-RENDERED="$(gcloud_instance describe --format='value(metadata.items)' 2>/dev/null)"
-if [[ -z "$RENDERED" ]]; then
-  bad "could not read startup-script metadata"
-elif printf '%s' "$RENDERED" | grep -q '\$\$'; then
-  bad "deployed startup-script still contains '\$\$'"
+if [[ "$PROVIDER" == hetzner ]]; then
+  OPEN="$(hz_public_ingress)"
+  assert "no INGRESS rule allows 0.0.0.0/0" "$OPEN" "none"
 else
-  ok "deployed startup-script is free of '\$\$'"
-fi
+  RENDERED="$(gcloud_instance describe --format='value(metadata.items)' 2>/dev/null)"
+  if [[ -z "$RENDERED" ]]; then
+    bad "could not read startup-script metadata"
+  elif printf '%s' "$RENDERED" | grep -q '\$\$'; then
+    bad "deployed startup-script still contains '\$\$'"
+  else
+    ok "deployed startup-script is free of '\$\$'"
+  fi
 
-FW_ERR="$(mktemp)"
-if FW_ALL="$(gcloud compute firewall-rules list --project "$PROJECT_ID" \
-  --format='csv[no-heading](name,direction,disabled,sourceRanges.list())' 2>"$FW_ERR")"; then
-  OPEN="$(printf '%s\n' "$FW_ALL" |
-    awk -F, '$2=="INGRESS" && tolower($3)=="false" && /0\.0\.0\.0\/0/ {print $1}')"
-  assert "no INGRESS rule allows 0.0.0.0/0" "${OPEN:-none}" "none"
-else
-  bad "could NOT check for public ingress rules — this assertion did not run.
+  FW_ERR="$(mktemp)"
+  if FW_ALL="$(gcloud compute firewall-rules list --project "$PROJECT_ID" \
+    --format='csv[no-heading](name,direction,disabled,sourceRanges.list())' 2>"$FW_ERR")"; then
+    OPEN="$(printf '%s\n' "$FW_ALL" |
+      awk -F, '$2=="INGRESS" && tolower($3)=="false" && /0\.0\.0\.0\/0/ {print $1}')"
+    assert "no INGRESS rule allows 0.0.0.0/0" "${OPEN:-none}" "none"
+  else
+    bad "could NOT check for public ingress rules — this assertion did not run.
   $(head -3 "$FW_ERR")"
+  fi
+  rm -f "$FW_ERR"
 fi
-rm -f "$FW_ERR"
 
 section "Tailnet"
 TS_JSON="$(tailscale status --json 2>/dev/null)"
@@ -96,6 +105,7 @@ echo "browser_owner=$(stat -c %U /mnt/data/browser 2>/dev/null || echo missing)"
 grep -q '\$\$' /usr/local/bin/headed-chromium \
   && echo "dollar_bug=present" || echo "dollar_bug=absent"
 
+tailscale status >/dev/null 2>&1 && echo "ts_operator=yes" || echo "ts_operator=no"
 echo "passwd_state=$(sudo passwd -S "$(id -un)" 2>/dev/null | awk '{print $2}')"
 sudo sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' \
   && echo "sshd_passauth=off" || echo "sshd_passauth=ON"
@@ -123,6 +133,7 @@ else
   assert "$SSH_USER password is locked" "$(fact "$VM_FACTS" passwd_state)" "L"
   assert "sshd PasswordAuthentication off" "$(fact "$VM_FACTS" sshd_passauth)" "off"
   assert "sshd PermitRootLogin off" "$(fact "$VM_FACTS" sshd_rootlogin)" "off"
+  assert "tailscale operator set for $SSH_USER" "$(fact "$VM_FACTS" ts_operator)" "yes"
 fi
 
 section "Browser stack (sidecar)"

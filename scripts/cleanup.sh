@@ -19,8 +19,8 @@ done
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_config
 
-echo ">> project=$PROJECT_ID region=$REGION bucket=$STATE_BUCKET"
-echo ">> FULL WIPE: compute$( $DELETE_BUCKET && echo ' + state bucket')$( $DELETE_FILES && echo ' + local files')"
+echo ">> provider=$PROVIDER instance=$INSTANCE"
+echo ">> FULL WIPE: compute$( [[ "$PROVIDER" == gcp ]] && $DELETE_BUCKET && echo ' + state bucket')$( $DELETE_FILES && echo ' + local files')"
 
 confirm() {
   $ASSUME_YES && return 0
@@ -41,8 +41,8 @@ if [[ -f "$TF_DIR/backend.tf" && -d "$TF_DIR/.terraform" ]]; then
   fi
 else
   echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
-  echo "   Skipping terraform destroy. If a VM still exists, delete it with:"
-  echo "     gcloud compute instances delete ${TF_VAR_instance_name:-cloud-agent} --zone ${TF_VAR_zone:-me-west1-a}"
+  echo "   Skipping terraform destroy. If a server still exists, delete it in the"
+  echo "   Hetzner Cloud console or with:  hcloud server delete $INSTANCE"
 fi
 
 LIVE="$(live_resources)"
@@ -59,7 +59,11 @@ if [[ -n "$LIVE" ]]; then
     DELETE_FILES=false
   fi
 else
-  echo ">> Verified with gcloud: no instance or data disk remains."
+  if [[ "$PROVIDER" == hetzner ]]; then
+    echo ">> Verified with the Hetzner API: no server or volume remains."
+  else
+    echo ">> Verified with gcloud: no instance or data disk remains."
+  fi
 fi
 
 if [[ -n "${TAILSCALE_API_KEY:-}" ]]; then
@@ -74,7 +78,7 @@ else
   echo "   Delete it manually or the next build joins as ${INSTANCE}-1."
 fi
 
-if $DELETE_BUCKET; then
+if [[ "$PROVIDER" == gcp ]] && $DELETE_BUCKET; then
   if gcloud storage buckets describe "gs://${STATE_BUCKET}" >/dev/null 2>&1; then
     echo ">> WARNING: deleting the state bucket destroys all Terraform state history."
     if confirm "Delete gs://${STATE_BUCKET} and ALL its contents?"; then
@@ -86,8 +90,10 @@ if $DELETE_BUCKET; then
   else
     echo ">> State bucket gs://${STATE_BUCKET} does not exist. Nothing to delete."
   fi
-else
+elif [[ "$PROVIDER" == gcp ]]; then
   echo ">> Keeping state bucket gs://${STATE_BUCKET} (--keep-bucket)."
+else
+  echo ">> No state bucket (Hetzner uses local state)."
 fi
 
 if $DELETE_FILES; then

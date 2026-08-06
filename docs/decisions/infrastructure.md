@@ -19,7 +19,11 @@ catch up on, and `unattended-upgrades` ships enabled. The workload (Chromium,
 Tailscale) is distro-agnostic, so laptop parity bought nothing and a rolling
 release cost babysitting. See [history.md](history.md).
 
-## Tailscale-only access, dedicated VPC, IAP as break-glass — **Made**
+## Tailscale-only access, dedicated VPC, IAP as break-glass — **Made (GCP path)**
+
+*Describes the GCP design. The box now runs on Hetzner, whose equivalent is: an
+empty-rule-set firewall (block inbound, allow outbound), with the web VNC
+console + rescue system as break-glass — see "Provider migration" below.*
 
 The VM has **no public inbound**. Access is Tailscale SSH over a tailnet
 established outbound; the only firewall ingress is tcp:22 from Google's IAP
@@ -112,7 +116,7 @@ conffile prompt → exit 100 → an `iU` state that poisoned every later apt run
 including phase A before `tailscale up`. Phase B now writes that file after the
 install and passes `--force-confold`.
 
-## Stay on GCP for now — **Made**
+## Stay on GCP for now — **Superseded**
 
 Not on merit. GCP is poor value at these specs — measured all-in $60.25/mo
 against roughly $10/mo for comparable Hetzner hardware — but:
@@ -129,6 +133,8 @@ protection" (the box's own egress is what any app's traffic uses, on any
 provider) and "Hetzner bills powered-off servers while a stopped
 GCP instance bills disks only" (that only matters if something polls 24/7, and
 nothing does).
+
+**Superseded 2026-08-05** by the migration below — the repo now builds on Hetzner.
 
 ## Static external IP — **Reversed**
 
@@ -153,46 +159,35 @@ when it does, buy cores.
 `hardwareConcurrency: 2` is visible in the browser fingerprint and is only
 fixable by paying for a bigger machine type. Accepted for now.
 
-## Provider migration — **Parked**
+## Provider migration — **Made (Hetzner)**
 
-Blocked on two things: real sizing for whatever runs on this box (the agent-layer
-measurements that would show it are in
-[`~/stuff/phone-approval`](../../../phone-approval/docs/measurements.md)), and
-break-glass.
+The box moved from GCP `e2-standard-2` ($60.25/mo, me-west1) to Hetzner CX33
+4 vCPU / 8 GB + 20 GB Volume ($10.59 + $0.96 ≈ **$11.55/mo**, nbg1, 61–62 ms
+from the workstation). Evidence in `../measurements.md`.
 
-**Break-glass is the honest counterweight to the $1,353/yr.** GCP's IAP tunnel is
-the only non-Tailscale way into a box with zero public ingress. Hetzner has no
-equivalent, and our own hardening closes the alternatives — `verify.sh:138-140`
-asserts the account password is locked and root login is off, which shuts the VNC
-console. Combined with the loss of a programmatic serial console, a Hetzner box
-that boots but fails `tailscale up` would be **unreachable and unobservable
-simultaneously**. GCP has two independent escapes; Hetzner would have zero. Decide
-this before writing any Terraform.
+What unblocked it:
 
-A full survey found **~80% of the repo is provider-agnostic** — all of
-`tailscale-api.sh` and `verify-browser.sh`, most of `verify.sh`'s checks, and most
-of `startup.tf`'s guest logic including the two-phase design. The danger is
-concentrated in the other 20%, recorded here so the survey is not redone:
+- **The break-glass premise was self-imposed, not a Hetzner limitation.** The
+  old analysis said a Hetzner box that boots but fails `tailscale up` would be
+  "unreachable and unobservable simultaneously… Hetzner would have zero"
+  escapes. Partly true, partly not: the web VNC console login is unusable —
+  `verify.sh` asserts the account password is locked and root login is off,
+  which *does* shut the console tty. But Hetzner's **rescue system** boots a
+  separate image with a key injected via the API, and that works regardless of
+  the guest's sshd state. The box also re-runs phase A by itself: startup is a
+  re-runnable systemd unit (`systemctl restart agent-startup`), so a reboot
+  (from the console) re-applies the whole provisioning with the key on disk.
+- **The startup script became provider-neutral.** One shared template
+  (`scripts/templates/startup.sh`) serves every provider: the data disk is
+  discovered by filesystem **label** (`LABEL=cloud-agent-data`), phase A is a
+  systemd unit instead of a vendor metadata runner, and phase B stays deferred.
+- **A `PROVIDER` shim in `scripts/lib.sh`** dispatches status/stop/start/firewall
+  checks; `verify.sh`, `wait-ready.sh`, `rekey.sh`, `up.sh` and `cleanup.sh`
+  branch on it. The GCP path remains for reference.
+- **State backend is local** (terraform/hetzner/terraform.tfstate, git-ignored),
+  not GCS: the GCP project was retired. Tradeoff accepted: a single always-on
+  box that `./run up` can rebuild; revisit Hetzner Object Storage if the box
+  ever needs shared state.
 
-- **No `google_metadata_script_runner` equivalent.** `./run rekey` loses its
-  mechanism and every re-key becomes a full reboot. Better fix: phase A installs
-  itself as `/usr/local/sbin/agent-startup` plus a systemd unit, so "re-run
-  startup" is `systemctl restart` over SSH. That is an improvement on the status
-  quo.
-- **No programmatic serial console.** `wait-ready.sh` loses its no-SSH
-  observability channel, and the fallback requires SSH, which
-  requires the tailnet, which is the thing being waited on. Replace with an
-  outbound status beacon from phase A, which also eliminates the console-flush bug
-  class that already cost one debugging session.
-- **Data-disk device path.** `startup.tf` hardcodes
-  `/dev/disk/by-id/google-data`. Hetzner's path embeds a volume ID unknowable
-  until the volume exists, and templating it creates a Terraform dependency
-  cycle. Discover in-guest by label — if the path is wrong, `mkfs.ext4 -F` runs
-  against it.
-- **Status vocabulary.** `instance_status()` returns `RUNNING`/`TERMINATED`;
-  Hetzner's is lowercase and differently named (`running`/`off`). A missed rename
-  falls through to a catch-all that waits 10 minutes on a box that is off.
-- **cloud-init `user_data` runs once by default**, unlike GCE's every-boot
-  metadata script, which the current self-healing design relies on.
-- **State backend.** Hetzner has no first-class object store, and two thirds of
-  `bootstrap.sh` exists solely to solve the GCS chicken-and-egg.
+`./run verify` passes 16/16 and survives a reboot (fstab `LABEL=` mount,
+`/var/lib/tailscale` bind-mount, tailnet identity all persist).

@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 022
+exec > >(tee /var/log/startup-agent.log) 2>&1
+echo "=== agent startup $(date -u) ==="
+
+export DEBIAN_FRONTEND=noninteractive
+APT="apt-get -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confold"
+
+DATA_LABEL="__DATA_LABEL__"
+DATA_DEV="__DATA_DEV__"
+DATA_MNT="/mnt/data"
+USER_NAME="__USER__"
+INSTANCE_NAME="__INSTANCE__"
+
+# Install this script as a re-runnable systemd unit so "re-run phase A" is
+# `systemctl restart agent-startup` — no cloud vendor's metadata runner needed.
+# cloud-init/user_data only delivers this file once; the unit owns every later run.
+if [ "$(readlink -f "$0" 2>/dev/null || echo "$0")" != "/usr/local/sbin/agent-startup" ]; then
+  cp "$0" /usr/local/sbin/agent-startup
+  chmod +x /usr/local/sbin/agent-startup
+fi
+
+if [ ! -f /etc/systemd/system/agent-startup.service ]; then
+  cat > /etc/systemd/system/agent-startup.service <<'UNIT'
+[Unit]
+Description=cloud-agent phase A: reach the box (disk, tailscale, user)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/agent-startup
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable agent-startup.service
+fi
+
+# --- persistent data disk, discovered by filesystem LABEL (provider-neutral) ---
+mkdir -p "$DATA_MNT"
+if ! blkid -L "$DATA_LABEL" >/dev/null 2>&1; then
+  if [ -b "$DATA_DEV" ]; then
+    echo ">> formatting fresh data disk $DATA_DEV (label $DATA_LABEL)"
+    mkfs.ext4 -F -L "$DATA_LABEL" "$DATA_DEV"
+  else
+    echo "!! data device $DATA_DEV not found at first boot"
+  fi
+fi
+if [ -n "$(blkid -L "$DATA_LABEL" 2>/dev/null)" ]; then
+  if ! findmnt "$DATA_MNT" >/dev/null 2>&1; then
+    # Mount by LABEL, not UUID: blkid -L returns the DEVICE path, and the path
+    # can change between boots/provider rebuilds. LABEL= is the stable handle.
+    if ! mount -o discard,defaults LABEL="$DATA_LABEL" "$DATA_MNT"; then
+      echo "!! could not mount $DATA_MNT (continuing: reachability first)"
+    fi
+  fi
+  if ! grep -qE "[[:space:]]$DATA_MNT[[:space:]]" /etc/fstab; then
+    echo "LABEL=$DATA_LABEL $DATA_MNT ext4 discard,defaults,nofail 0 2" >> /etc/fstab
+  fi
+else
+  echo "!! data disk not mountable yet (label $DATA_LABEL absent)"
+fi
+
+$APT update
+$APT install -y curl ca-certificates sudo
+if ! command -v tailscale >/dev/null 2>&1; then
+  curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+mkdir -p "$DATA_MNT/tailscale"
+if [ -L /var/lib/tailscale ]; then
+  rm /var/lib/tailscale
+fi
+mkdir -p /var/lib/tailscale
+# If /var/lib/tailscale is bound to a directory that is NOT the data volume's
+# (e.g. a degraded early boot before the volume mounted), re-point it.
+CUR_SRC="$(findmnt -no SOURCE /var/lib/tailscale 2>/dev/null || true)"
+if [ -n "$CUR_SRC" ] && [ "$CUR_SRC" != "$DATA_MNT/tailscale" ]; then
+  echo ">> /var/lib/tailscale was bound to $CUR_SRC; re-pointing to the data volume"
+  umount /var/lib/tailscale 2>/dev/null || true
+  CUR_SRC=""
+fi
+if ! findmnt /var/lib/tailscale >/dev/null 2>&1; then
+  mount --bind "$DATA_MNT/tailscale" /var/lib/tailscale
+fi
+if ! grep -qE "[[:space:]]/var/lib/tailscale[[:space:]]" /etc/fstab; then
+  echo "$DATA_MNT/tailscale /var/lib/tailscale none bind,nofail 0 0" >> /etc/fstab
+fi
+
+if ! id "$USER_NAME" >/dev/null 2>&1; then
+  useradd -m -G sudo -s /bin/bash "$USER_NAME"
+fi
+echo '%sudo ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent-sudo
+chmod 440 /etc/sudoers.d/agent-sudo
+
+# sshd hardening: this is what keeps the only "other way in" to a physical
+# console (Hetzner web console, GCP serial console). Key-only over Tailscale.
+# Filename sorts BEFORE cloud-init's 50-cloud-init.conf because sshd keeps the
+# FIRST value it sees — a 99- drop-in would lose to cloud-init's
+# "PasswordAuthentication yes".
+mkdir -p /etc/ssh/sshd_config.d
+rm -f /etc/ssh/sshd_config.d/99-agent-hardening.conf
+cat > /etc/ssh/sshd_config.d/10-agent-hardening.conf <<'HARD'
+PasswordAuthentication no
+PermitRootLogin no
+HARD
+chmod 644 /etc/ssh/sshd_config.d/10-agent-hardening.conf
+
+systemctl enable --now ssh
+systemctl restart ssh
+systemctl enable --now tailscaled
+
+# --- join the tailnet ---
+AUTHKEY=""
+if [ -s /etc/agent/authkey ]; then
+  AUTHKEY="$(cat /etc/agent/authkey)"
+elif [ -n "__AUTHKEY__" ]; then
+  mkdir -p /etc/agent
+  ( umask 077; echo "__AUTHKEY__" > /etc/agent/authkey )  # subshell: don't leak umask 077
+  AUTHKEY="__AUTHKEY__"
+fi
+
+TS_STATE=""
+for _ in $(seq 1 15); do
+  TS_STATE="$(tailscale status --json 2>/dev/null |
+    sed -n 's/.*"BackendState": *"\([^"]*\)".*/\1/p' | head -1)"
+  [ -n "$TS_STATE" ] && break
+  sleep 1
+done
+echo ">> tailscale BackendState=${TS_STATE:-unknown}"
+
+if [ "$TS_STATE" = "Running" ]; then
+  tailscale up --ssh --hostname="$INSTANCE_NAME" \
+    || echo ">> tailscale up (no key) returned non-zero; already up?"
+elif [ -n "$AUTHKEY" ]; then
+  tailscale up --ssh --hostname="$INSTANCE_NAME" --authkey="$AUTHKEY" ||
+    echo ">> tailscale up FAILED: the one-off key is likely spent, revoked or expired.
+    >> Recover with:  ./run rekey     (writes a key over SSH and restarts agent-startup)"
+else
+  echo ">> no tailscale auth key available; this box cannot join the tailnet."
+fi
+
+# Let the agent user run `tailscale` without sudo (status/up/set, etc.).
+# Same as the manual `sudo tailscale set --operator=$USER`, run from a login
+# shell — but this script runs as root, so name the user explicitly.
+sudo tailscale set --operator="$USER_NAME" \
+  || echo ">> tailscale set --operator failed (tailscale may not be up yet)"
+
+# --- virtual-display browser stack (phase B is deferred; this is the config) ---
+cat > /etc/systemd/system/xvfb.service <<'UNIT'
+[Unit]
+Description=Virtual framebuffer X server (DISPLAY :99)
+After=systemd-user-sessions.service
+
+[Service]
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl enable xvfb.service
+systemctl start xvfb.service
+
+echo 'export DISPLAY=:99' > /etc/profile.d/display.sh
+chmod 644 /etc/profile.d/display.sh
+
+cat > /etc/systemd/system/x11vnc.service <<'UNIT'
+[Unit]
+Description=x11vnc on DISPLAY :99, loopback only (manual start, for hand-login)
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/x11vnc -display :99 -localhost -nopw -forever -shared -noxdamage
+SuccessExitStatus=2
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /usr/local/bin/headed-chromium <<'CHROME'
+#!/usr/bin/env bash
+export DISPLAY="${DISPLAY:-:99}"
+export LIBGL_ALWAYS_SOFTWARE=1
+exec chromium --no-first-run --no-default-browser-check \
+  --disable-blink-features=AutomationControlled \
+  --ignore-gpu-blocklist --use-gl=angle --use-angle=gl \
+  --window-size="${BROWSER_WINDOW_SIZE:-1920,1080}" \
+  --remote-debugging-port="${CDP_PORT:-9222}" \
+  --user-data-dir="${BROWSER_PROFILE_DIR:-/mnt/data/browser/default}" \
+  "$@"
+CHROME
+chmod 755 /usr/local/bin/headed-chromium
+
+mkdir -p "$DATA_MNT/browser" "$DATA_MNT/app"
+chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
+
+cat > /usr/local/sbin/agent-install-packages <<'PKGS'
+#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+APT="apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confold"
+
+echo "=== agent packages $(date -u) ==="
+$APT update
+
+echo ">> wave 1: CLI tools"
+$APT install -y git stow tmux neovim python3-pip zsh
+
+# The account phase A created. Pinned by name (not a uid heuristic) so a
+# cloud-init default user on a non-GCP image cannot hijack the chsh.
+AGENT_USER="__USER__"
+if [ -n "$AGENT_USER" ] && command -v zsh >/dev/null 2>&1; then
+  chsh -s /usr/bin/zsh "$AGENT_USER" || echo ">> chsh skipped (account state)"
+  echo ">> default shell for $AGENT_USER -> zsh"
+fi
+
+echo ">> wave 2: upgrade + headed-browser stack"
+$APT upgrade -y
+$APT install -y build-essential xvfb xauth chromium \
+  fonts-liberation fonts-noto-core zram-tools \
+  x11vnc python3-venv libgl1-mesa-dri
+
+echo "=== agent packages complete $(date -u) ==="
+PKGS
+chmod 755 /usr/local/sbin/agent-install-packages
+
+cat > /etc/systemd/system/agent-packages.service <<'UNIT'
+[Unit]
+Description=cloud-agent deferred package install (CLI tools + headed browser stack)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/agent-install-packages
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable agent-packages.service
+# Only kick phase B if it is not already running: the unit is enabled, so on
+# every boot it starts on its own — restarting it here again would race it.
+if ! systemctl is-active --quiet agent-packages; then
+  systemctl restart --no-block agent-packages.service
+fi
+
+echo ">> phase B (packages + browser stack) is installing in the background."
+echo ">>   progress:  journalctl -u agent-packages -f"
+echo ">>   state:     systemctl is-active agent-packages"
+
+touch /run/agent-startup-complete
+logger -t agent-startup "agent startup complete"
+echo "=== agent startup complete $(date -u) ==="

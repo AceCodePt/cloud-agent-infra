@@ -10,8 +10,9 @@ Rules this file follows, because breaking them has cost real debugging time:
   same `PATH` discipline as the committed checks (see "traps" below).
 - Measure the *effect*, not the reported configuration.
 
-Unless stated otherwise: GCP `e2-standard-2` (2 vCPU / 8 GB), `me-west1-a`,
-Debian 12, `MemTotal` 7950 MB, August 2026.
+Unless stated otherwise: **Hetzner CX33** (4 vCPU / 8 GB), `nbg1` Nuremberg, Debian 12,
+`MemTotal` 7750 MB, August 2026. Earlier measurements are GCP `e2-standard-2`
+(2 vCPU / 8 GB), `me-west1-a`, Debian 12, `MemTotal` 7950 MB.
 
 Agent-layer measurements — what an opencode session or a language server costs,
 how the box degrades under concurrency — moved with the agent layer to
@@ -116,6 +117,50 @@ happened and left no log to explain it. Always bracket the first character:
 runner's pipe before exiting, so the final line lands on disk but can be dropped
 from the journal. `wait-ready.sh` polled for exactly that marker, so a healthy
 84-second boot presented as a 10-minute timeout.
+
+## Hetzner CX33 — the migration box
+
+Measured 2026-08-05 on the live box (Hetzner Cloud, `nbg1`, Debian 12, CX33
+4 vCPU / 8 GB, 80 GB NVMe + 20 GB Volume). Built with this repo's shared
+startup template.
+
+| What | Value |
+|---|---|
+| Cost, all-in | **≈ $11.55/mo** — CX33 $10.59 + 20 GB Volume ≈ $0.96. vs GCP `e2-standard-2` $60.25 |
+| Tailscale RTT from workstation | **61–62 ms** (matches the 61.7 ms TCP pre-measure) |
+| CPU | AMD EPYC-Rome, **4 physical threads** (GCP e2 "2 vCPU" = 2 hyperthreads on 1 core) |
+| sysbench CPU 1-thread | 3488 events/s |
+| sysbench CPU 4-thread | 14015 events/s — near-linear, i.e. real cores |
+| sysbench memory (1K × 1 GB, 4 thr) | 4.47 GiB/s |
+| boot → on tailnet | ~1 min from create (server created 18:10:28 UTC, `tailscale up` in the first cloud-init run) |
+| Browser | identical stack to the GCP measurement: headed Chromium 151, Xvfb `:99`, llvmpipe WebGL |
+
+`./run verify` passes 16/16 and survives a full reboot (fstab `LABEL=` mount,
+`/var/lib/tailscale` bind-mount, and the tailnet node identity all persist — the
+node keeps its IP across reboots).
+
+### Traps the migration surfaced (each cost real debugging time)
+
+- **`blkid -L` returns the DEVICE path, not the UUID.** `blkid -s UUID -o value -L <label>`
+  is unreliable across util-linux versions; it yielded `/dev/sdb` and
+  `mount UUID=/dev/sdb` failed — aborting phase A before the box reached the
+  tailnet. Mount by `LABEL=<label>` (mount and fstab), which is also the stable
+  handle across provider rebuilds.
+- **`>` redirect preserves an existing file's mode.** A file once created 0711
+  stays 0711 across rewrites. `chmod +x` can't fix a 0711 script (it needs
+  read+exec for a non-owner). Fix in the template: `chmod 755` explicitly.
+- **sshd keeps the FIRST value it sees.** cloud-init writes
+  `50-cloud-init.conf` with `PasswordAuthentication yes`; a `99-` drop-in loses.
+  The hardening drop-in must sort before cloud-init's: `10-agent-hardening.conf`.
+- **`umask 077` in an `if` branch leaks into the main shell.** The one-off
+  authkey write set umask 077 and every later file in phase A was created
+  0600/0711. Scope it in a subshell; set `umask 022` at the top of the script.
+- **A `grep -q /mnt/data` matches the `/mnt/data/tailscale` bind line**, so the
+  data-disk fstab entry was silently skipped on re-runs. Anchor the match:
+  `grep -qE "[[:space:]]/mnt/data[[:space:]]"`.
+- **`agent-packages` double-triggers at boot** (enabled unit + `agent-startup`
+  restarting it) → a transient `failed` that verify can catch. Only kick phase B
+  when it is not already active.
 
 ## Latency from the workstation
 

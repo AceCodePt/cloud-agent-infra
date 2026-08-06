@@ -18,14 +18,22 @@ cp example.config.env config.env
 ```
 
 ```sh
-# config.env  (git-ignored — contains a secret)
-TF_VAR_project_id="your-project-id"
-TF_VAR_region="me-west1"           # Tel Aviv: lowest latency from Israel
-TF_VAR_zone="me-west1-a"
-TF_VAR_machine_type="e2-standard-2"  # 2 full vCPU/8GB; e2-medium is leaner
+# config.env  (git-ignored — contains secrets)
+PROVIDER="hetzner"             # gcp | hetzner
 TF_VAR_instance_name="cloud-agent"   # also the tailnet hostname
 TF_VAR_ssh_user="youruser"           # your Unix user on the box
-TF_VAR_data_disk_size_gb="20"        # persistent disk for repos + tailscale state (defaults to 20)
+TF_VAR_machine_type="cx33"           # 4 vCPU/8GB; cx23 (2/4) is leaner
+
+# Hetzner Cloud API token (console -> Security -> API Tokens). Also sets
+# TF_VAR_hcloud_token for Terraform.
+HETZNER_API_KEY="your-hetzner-api-token"
+TF_VAR_location="nbg1"             # Nuremberg; fsn1 Falkenstein, hel1 Helsinki
+TF_VAR_data_disk_size_gb="20"      # optional volume size (defaults to 20)
+
+# GCP (unused while PROVIDER=hetzner; kept for switching back)
+TF_VAR_project_id="your-project-id"
+TF_VAR_region="me-west1"
+TF_VAR_zone="me-west1-a"
 
 # Tailnet admin key. bootstrap.sh mints a single-use auth key per build from it.
 TAILSCALE_API_KEY="tskey-api-..."
@@ -38,11 +46,9 @@ TAILSCALE_API_KEY="tskey-api-..."
 > so a key here is ignored on every normal build and then silently takes effect —
 > as a long-spent key — if that file ever goes missing. Set one or the other.
 
-> **`TF_VAR_ssh_public_key` is optional and usually unnecessary** — it authorizes
-> your own key for sshd, but `gcloud compute ssh --tunnel-through-iap` injects an
-> ephemeral key of its own, and Tailscale SSH needs no key at all. Set it only if
-> you connect to sshd through a raw IAP tunnel with your own key (e.g. editor
-> Remote-SSH without Tailscale).
+> **`TF_VAR_ssh_public_key` is optional and GCP-path-only** — it authorizes
+> your own key for sshd so you can connect through a raw IAP tunnel. On Hetzner
+> there is no IAP; Tailscale SSH needs no key at all. Leave it unset.
 
 No `export` prefixes, nothing to source or activate. Every entry point calls
 `load_config` (`scripts/lib.sh`), which wraps the source in `set -a` so `TF_VAR_*`
@@ -65,15 +71,11 @@ exactly one definition. Full reasoning:
 
 ## Prerequisites
 
-- A Google Cloud project with **billing enabled**.
-- `gcloud` and `terraform` installed locally. (No `direnv`.)
-- A [Tailscale](https://tailscale.com) account and a tailnet **API key** (admin
-  console → Settings → Keys). The tooling mints its own single-use auth key per
-  build from that; you do not manage auth keys by hand.
-- Application-default credentials for Terraform:
-  ```sh
-  gcloud auth application-default login
-  ```
+- A Hetzner Cloud account with an **API token** (Project → Security → API Tokens)
+  in `config.env`, plus a Tailscale **API key** (admin console → Settings → Keys)
+  to mint the one-off auth key per build.
+- `terraform` installed locally. (The GCP provider path also needs `gcloud` and
+  application-default credentials — see `example.config.env`.)
 
 ---
 
@@ -86,53 +88,53 @@ exactly one definition. Full reasoning:
 `up` is a **convergence** command, not a build script: every step first asks what
 is already true and does nothing if the answer is "already correct". It ends by
 running `verify.sh`, so it can't lie about the result. **Non-destructive by
-contract** — it never destroys the VM, data disk, state bucket, or a tailnet
-node. It cannot cost you your browser logins or the work on `/mnt/data`.
+contract** — it never destroys the server, data volume, or a tailnet node. It
+cannot cost you your browser logins or the work on `/mnt/data`.
 
 The steps `up` encodes, in order, doing only what is missing:
 
 | # | Converges | Acts only if |
 |---|-----------|--------------|
-| 1 | Terraform state backend | `backend.tf` or the backend record is absent |
+| 1 | Terraform state backend | `terraform/<provider>/` is not `terraform init`-ed |
 | 2 | Tailscale auth key | the current key is unusable (spent, revoked, missing) |
 | 3 | Infrastructure | `terraform apply` — always; it is itself a converge |
-| 4 | Guest has consumed the key | the VM is not online in the tailnet |
-| 5 | Local `known_hosts` | a stale entry from a previous VM is blocking SSH |
+| 4 | Guest has consumed the key | the box is not online in the tailnet |
+| 5 | Local `known_hosts` | a stale entry from a previous box is blocking SSH |
 | 6 | Proof | `verify.sh`, non-zero exit on any drift |
 
-Step 4 is why `up` exists — `apply` alone cannot re-key a running VM (below).
+Step 4 is why `up` exists — `apply` alone cannot re-key a running box (below).
 
 ### Rebuilding from scratch
 
 `./run rebuild` is the destructive sibling: `cleanup → bootstrap → apply → wait →
-verify`. It **destroys the data disk, the state bucket and the tailnet
-node** — a new node identity and loss of everything on `/mnt/data`. Reach for it
-only when you mean exactly that; `up` is what you want the other 99% of the time.
+verify`. It **destroys the server, the data volume and the tailnet node** — a new
+node identity and loss of everything on `/mnt/data`. Reach for it only when you
+mean exactly that; `up` is what you want the other 99% of the time.
 
 ```sh
 ./scripts/cleanup.sh          # tear down + delete the tailnet node
-./scripts/bootstrap.sh        # state bucket + backend.tf + init + mint a one-off auth key
-./run apply                   # instance created; reachable ~40-60s later
+./scripts/bootstrap.sh        # terraform init + mint a one-off auth key
+./run apply                   # server created; reachable ~1 min later
 ./scripts/wait-ready.sh       # block until on the tailnet AND startup script done
 ./scripts/verify.sh           # assert the entire end state, non-zero on any drift
 ```
 
 ### The boot is two phases, and the split is the point
 
-**Phase A (foreground, ~40-60s)** does only what is needed to *reach* the box:
-mount the data disk, install Tailscale, create your user, `tailscale up`. The
-single-use auth key is spent at the end of phase A.
+**Phase A (foreground, ~1 min)** does only what is needed to *reach* the box:
+mount the data volume (by `LABEL=cloud-agent-data`), install Tailscale, create
+your user, `tailscale up`. The single-use auth key is spent at the end of
+phase A.
 
 **Phase B (background, ~4 min)** is everything else, in waves: CLI tools, `apt
 upgrade`, and the headed-browser stack (chromium, fonts, Xvfb, xauth, x11vnc,
-`libgl1-mesa-dri`, zram). It runs as `agent-packages.service`,
-launched with `systemctl restart --no-block`, so the metadata script runner
-returns immediately. The default shell for the interactive account phase A
-created is `zsh`; the install picks that single account (uid ≥ 1000) rather than
-hardcoding a name.
+`libgl1-mesa-dri`, zram). It runs as `agent-packages.service`, launched with
+`systemctl restart --no-block` by `agent-startup.service` (the systemd unit
+phase A installs), so phase A returns immediately. The default shell for the
+interactive account phase A created is `zsh`.
 
-Measured, not guessed: `274s → 84s` for instance-created → key-consumed. The
-remaining 41s of the 84 is GCE booting the guest before it hands over.
+Measured on Hetzner, not guessed: ~1 min from server created → on the tailnet
+(the GCP box measured `274s → 84s` for the same milestone).
 
 ```sh
 ./run ssh journalctl -u agent-packages -f   # watch phase B
@@ -147,24 +149,24 @@ deliberately declared ready before phase B finishes, `verify.sh` reports the
 browser checks as **SKIP** while `agent-packages` is `activating`. That is not
 drift.
 
-### `apply` cannot re-key a running VM
+### `apply` cannot re-key a running box
 
-The auth key reaches the VM through the `startup-script` **metadata** value, and
-GCE only runs `startup-script` at **boot**. Minting a key and applying against an
-existing instance is a metadata-only update — the guest never reads it, nothing
-joins the tailnet, and the apply reports success. Use:
+The auth key is baked into the boot provisioning (metadata on GCP, cloud-init
+`user_data` on Hetzner) and neither re-reads it after boot. Minting a key and
+re-applying does nothing for a running box. Use:
 
 ```sh
-./run rekey            # mint + apply + re-run startup over IAP (no downtime)
-./run rekey --reboot    # same, but stop/start instead — needs only the Compute API
+./run rekey            # mint + deliver the key over Tailscale SSH + re-run phase A
+./run rekey --reboot   # same, but stop/start the box instead
 ```
 
-`rekey` re-triggers the startup script rather than running `tailscale up` by
-hand, so the key is read from metadata. The default path goes over
-`gcloud compute ssh --tunnel-through-iap` deliberately: if you are running this,
-Tailscale is broken, so the tailnet is not usable as a transport. Safe on a
-healthy box — the startup script only spends a key when the node is not already a
-member.
+On Hetzner, `rekey` writes the fresh key to `/etc/agent/authkey` over SSH and
+runs `systemctl restart agent-startup` — phase A is a re-runnable systemd unit,
+not a one-shot metadata script. This only works while the box is reachable over
+the tailnet. If the box is **off** the tailnet, there is no network way in (zero
+public ingress): use the Hetzner Cloud web console or a rescue system to fix
+`/etc/agent/authkey`, then reboot. The startup script only spends a key when the
+node is not already a member.
 
 ### A dead key fails the apply, not the boot
 
@@ -241,54 +243,47 @@ through the same tunnel (`BROWSER_CMD=social-chromium ./run browser`).
 
 ## Teardown
 
-**Full wipe by default** — destroys the VM + data disk, deletes the GCS state
-bucket, and removes local Terraform artifacts:
+**Full wipe by default** — destroys the server + data volume, deletes local
+Terraform state, and removes local artifacts:
 
 ```sh
-./run cleanup                # FULL wipe (compute + bucket + files + tailnet node)
+./run cleanup                # FULL wipe (compute + local state + files + tailnet node)
 ./run cleanup --yes          # same, skip confirmation prompts
-./scripts/cleanup.sh --keep-bucket   # keep the state bucket
-./scripts/cleanup.sh --keep-files    # keep local .terraform / backend.tf / state
+./scripts/cleanup.sh --keep-files    # keep local .terraform / tfstate
 ```
+(The GCP path additionally manages a GCS state bucket; `--keep-bucket` applies
+there.)
 
 > **`cleanup` is not "reset".** Answering `y` to all three prompts deletes the
-> data disk — everything under `/mnt/data` and the tailnet node identity — plus
-> the state bucket, which is the only record of what exists.
+> data volume — everything under `/mnt/data` and the tailnet node identity — plus
+> the local state, which is the only record of what exists.
 > There is no undo. If your goal is "make it work again", that is `./run up`; if
-> it is "throw the VM away but keep my data", that is:
+> it is "throw the server away but keep my data", that is:
 >
 > ```sh
-> ./run tf destroy -target=google_compute_instance.agent && ./run up
+> ./run tf destroy -target=hcloud_server.agent && ./run up
 > ```
 
 ---
 
 ## Security: no public inbound
 
-The VM runs on its **own dedicated VPC** (`network.tf`), not GCP's `default`
-network (whose auto rules open tcp:22, tcp:3389, icmp to `0.0.0.0/0`).
-
-The firewall allows only:
-
-- **Ingress tcp:22 from `35.235.240.0/20`** — Google's IAP range, so
-  `gcloud compute ssh --tunnel-through-iap` works as a break-glass path.
-- **Ingress within the subnet** (`10.10.0.0/24`).
-- **All egress** — Tailscale dials out; apt/git need the internet.
+The box is protected by a **Hetzner Cloud firewall** (`terraform/hetzner/firewall.tf`)
+with an **empty rule set** — Hetzner's documented default is that all inbound is
+blocked and all outbound is permitted (the firewall is stateful, so established
+replies return). Tailscale dials out; nothing else can reach the box.
 
 There is **no public inbound** — you reach the box over the Tailscale tailnet,
 established outbound. Your user has **passwordless sudo**, acceptable because the
-only ways in are your tailnet identity and your Google identity, both enforced
-off-box (`useradd` creates the account password-locked, so no password would ever
-match).
+only way in is your tailnet identity, enforced off-box (`useradd` creates the
+account password-locked, and sshd has `PasswordAuthentication no` +
+`PermitRootLogin no`, so no password would ever match).
 
-If you still have GCP's default rules:
-
-```sh
-gcloud compute firewall-rules list \
-  --format="table(name,network,sourceRanges.list())"
-# delete the internet-facing ones (keep default-allow-internal):
-gcloud compute firewall-rules delete default-allow-ssh default-allow-rdp default-allow-icmp --quiet
-```
+Break-glass when Tailscale is the thing that is broken: the Hetzner Cloud **web
+console** (VNC) and the **rescue system** (boots a separate image with a key
+injected via the API). The tty login is unusable by design — the account password
+is locked and root login is off — so a live fix goes through the rescue system or
+a reboot of a repaired disk.
 
 ---
 
@@ -316,9 +311,10 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
 ## Gotchas (learned the hard way)
 
 - **GCP's `default` network is wide open** (tcp:22, 3389, icmp from `0.0.0.0/0`).
-  Use the dedicated VPC in `network.tf`, or delete those rules.
+  On the GCP path, use the dedicated VPC in `terraform/gcp/network.tf`, or delete
+  those rules. On Hetzner, an empty firewall rule set already blocks all inbound.
 - **Deleting `default-allow-ssh` makes plain `gcloud compute ssh` hang** — it has
-  no route in. Use `--tunnel-through-iap`, or rely on Tailscale.
+  no route in. Use `--tunnel-through-iap`, or rely on Tailscale. (GCP path only.)
 - **Tailscale SSH needs an ACL** granting it. In the tailnet admin console add an
   `ssh` rule (e.g. `action: accept`, `src: autogroup:member`,
   `dst: autogroup:self`, `users: [youruser, autogroup:nonroot]`).
@@ -344,9 +340,10 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
 - **Key injection on first boot can lag** on a fresh VM; give it a minute.
 - **In an HCL heredoc, `$$` is an escape only before `{`.** `$${VAR}` yields
   `${VAR}`, but `$$VAR` renders as two literal dollars, which bash expands to the
-  **PID**. Write bare `$VAR`. A `lifecycle precondition` in `compute.tf` now
-  fails the apply if any `$$` survives — and always verify against the *rendered*
-  script (`gcloud compute instances describe`).
+  **PID**. The startup now lives in a plain file
+  (`scripts/templates/startup.sh`, read via `file()`), so this whole class is
+  gone from new providers; the GCP path's `terraform/gcp/compute.tf` `lifecycle
+  precondition` still fails the apply if any `$$` survives the render.
 - **`ssh host cmd arg1 arg2` joins argv with spaces and the remote shell
   re-parses it.** Quoting is not preserved. Escape each argument with
   `printf %q` when the remote command carries user text.
@@ -360,29 +357,28 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
   governs debconf. Pass `-o Dpkg::Options::=--force-confold`.
 - **A conffile conflict poisons the box permanently.** The failed package is left
   half-configured (`iU`), so every later `apt-get install` fails identically —
-  before `tailscale up` — making the VM unreachable *and* unable to re-key itself.
+  before `tailscale up` — making the box unreachable *and* unable to re-key itself.
   Repair with `dpkg --configure --force-confold -a`.
 - **Never pre-create a file a package owns as a conffile.** Writing
   `/etc/default/zramswap` before installing `zram-tools` caused both bugs above.
-- **The last line of a startup script may never reach the serial console.**
+- **The last line of a startup script may never reach a serial console.**
   Milestones go through `logger` (synchronous, journal) and a sentinel file at
   `/run/agent-startup-complete` checked over SSH.
 - **gcloud `--filter` can be pushed SERVER-side and rejected.** `verify.sh` lists
-  plainly and matches client-side.
+  plainly and matches client-side. (GCP path.)
 - **gcloud and Terraform authenticate SEPARATELY.** Terraform uses
   application-default credentials; the `gcloud` CLI uses its own active account.
-  `gcloud auth list` / `gcloud config list` are the diagnosis.
+  `gcloud auth list` / `gcloud config list` are the diagnosis. (GCP path.)
 - **Don't let a failed API call read as a passing check.** A security check that
   cannot run must FAIL, never pass.
-- **Anything slow in the foreground of `startup-script` is time the box is
+- **Anything slow in the foreground of phase A is time the box is
   unreachable.** Keep phase A minimal; defer the rest to `agent-packages.service`.
-- **Do not write a literal doubled dollar inside the `startup.tf` heredoc** — not
-  even in a comment. The `compute.tf` precondition rejects the apply.
 - **`cleanup` is a wipe, not a reset.** To fix a broken box use `./run up`; to
-  replace just the VM, `tf destroy -target=...instance.agent`.
-- **Never delete the state bucket or `backend.tf` while resources exist.** They
-  are the only pointers to live infrastructure. `cleanup.sh` verifies with
-  `gcloud` that the instance and disk are really gone before either wipe.
+  replace just the server, `tf destroy -target=hcloud_server.agent`.
+- **Never delete the local Terraform state while resources exist.** It is the
+  only pointer to live infrastructure; `cleanup.sh` verifies the server and
+  volume are really gone before wiping it. (On the GCP path, the same applies to
+  the state bucket.)
 - **Measurement harness traps**: `pkill -f` patterns must be anchored or they
   match the killer's own command line and kill the shell running it; every `curl`
   health check needs `--connect-timeout --max-time` or a half-open server hangs

@@ -44,16 +44,18 @@ Asserted by `./run verify` — 17 checks, passing — and it has survived a full
 
 **The box**
 
-- GCP `e2-standard-2` (2 vCPU / 8 GB), `me-west1-a`, Debian 12
-- Dedicated VPC, zero public ingress; Tailscale-only access, with
-  `gcloud compute ssh --tunnel-through-iap` as break-glass
+- Hetzner CX33 (4 vCPU / 8 GB), `nbg1` Nuremberg, Debian 12 — ≈ $11.55/mo all-in
+- Zero public ingress; Tailscale-only access (Hetzner firewall, empty rule set =
+  block inbound / allow outbound), with Hetzner's web console + rescue system as
+  break-glass
 - Tailscale one-off auth keys minted via API and validated before every apply
-- Tailscale state bind-mounted onto the data disk — survives instance
-  replacement, but not data-disk destruction
-- Two-phase boot (`terraform/startup.tf`): phase A reaches the tailnet in ~84s,
-  phase B installs the rest out of band
+- Tailscale state bind-mounted onto the data volume (by `LABEL=cloud-agent-data`)
+  — survives server replacement, but not volume destruction
+- Two-phase boot (`scripts/templates/startup.sh`): phase A reaches the tailnet in
+  ~1 min, phase B installs the rest out of band
 - `./run up` — idempotent convergence, never destructive
-- Terraform state in GCS, bucket lifecycle in `scripts/bootstrap.sh`
+- Shared startup template + `PROVIDER` shim in `scripts/lib.sh`; the GCP Terraform
+  path remains for reference
 
 **On the box** (all from phase B, so all reproducible)
 
@@ -80,10 +82,10 @@ allowed. Re-check if a client contract says otherwise — and note that at ~$19/
 per box, one-server-per-client becomes affordable isolation that GCP pricing
 forecloses.
 
-**2. Provider migration.** Parked — see
-[`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md). The
-binding constraint is break-glass: GCP's IAP tunnel is the only non-Tailscale way
-into a box with zero public ingress, and Hetzner has no equivalent.
+**2. Provider migration.** **Made 2026-08-05** — the box is now Hetzner CX33
+(≈ $11.55/mo vs GCP's $60.25). The break-glass premise that blocked it (GCP's
+IAP being the only second escape) was partly self-imposed; see
+[`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md).
 
 ---
 

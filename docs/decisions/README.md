@@ -30,17 +30,17 @@ the premise is unevidenced".
 |---|---|
 | Native VM, not a container on COS | Made |
 | Debian 12 from Google's image family, not Arch | Made |
-| Tailscale-only access, dedicated VPC, IAP as break-glass | Made |
+| Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; Hetzner uses empty-rule firewall + console/rescue) |
 | Separate persistent data disk at `/mnt/data` | Made |
 | Two-phase boot | Made |
 | One-off auth keys minted per build, validated before apply | Made |
 | Node.js from the vendor apt repo, not a curl-to-shell install | Superseded |
 | `config.env` as the single source of truth; no direnv | Made |
 | zram compressed swap — kept | Made |
-| Stay on GCP for now | Made |
+| Stay on GCP for now | Superseded |
 | Static external IP | Reversed |
 | Right-sizing the box | Parked |
-| Provider migration | Parked |
+| Provider migration | Made (Hetzner CX33, 2026-08-05) |
 
 ### [browser.md](browser.md) — the browser on the box
 

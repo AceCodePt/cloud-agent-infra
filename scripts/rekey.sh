@@ -17,6 +17,40 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+if [[ "$PROVIDER" == hetzner ]]; then
+  STATUS="$(instance_status)"
+  if [[ "$STATUS" == absent ]]; then
+    die "server '$INSTANCE' does not exist, so there is nothing to rekey.
+  For a fresh build use: ./run rebuild"
+  fi
+  if [[ "$STATUS" == unknown ]]; then
+    die "cannot reach the Hetzner API. Check HETZNER_API_KEY in config.env."
+  fi
+
+  "$SCRIPT_DIR"/tailscale-api.sh mint
+  "$SCRIPT_DIR"/tailscale-api.sh check
+
+  KEY="$(sed -nE 's/^[[:space:]]*tailscale_auth_key[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$TF_DIR/tailscale.auto.tfvars" | head -1)"
+  [[ -n "$KEY" ]] || die "minted key not found in $TF_DIR/tailscale.auto.tfvars"
+
+  note "delivering the fresh key to $INSTANCE and re-running phase A"
+  if ! ssh_vm bash -s <<EOF
+sudo mkdir -p /etc/agent
+printf '%s' '$KEY' | sudo tee /etc/agent/authkey >/dev/null
+sudo chmod 600 /etc/agent/authkey
+sudo systemctl restart agent-startup
+EOF
+  then
+    die "could not reach $SSH_USER@$INSTANCE over the tailnet to deliver the key.
+  If the box is not online, use the Hetzner Cloud web console (VNC) or a rescue
+  system to write /etc/agent/authkey, or rebuild with: ./run rebuild"
+  fi
+
+  "$SCRIPT_DIR"/wait-ready.sh
+  note "Rekey complete. Next: ./run verify"
+  exit 0
+fi
+
 gcloud compute instances describe "$INSTANCE" --zone "$ZONE" --project "$PROJECT_ID" \
   >/dev/null 2>&1 ||
   die "instance '$INSTANCE' does not exist, so there is nothing to rekey.

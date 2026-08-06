@@ -26,13 +26,17 @@ step() {
 }
 converged() { printf '  \033[32mok\033[0m    %s\n' "$1"; }
 
-printf '\033[1mConverging %s (project %s, zone %s)\033[0m\n' "$INSTANCE" "$PROJECT_ID" "$ZONE"
+printf '\033[1mConverging %s (provider %s)\033[0m\n' "$INSTANCE" "$PROVIDER"
 
-gcloud auth application-default print-access-token >/dev/null 2>&1 ||
-  die "no application-default credentials.
+if [[ "$PROVIDER" == gcp ]]; then
+  gcloud auth application-default print-access-token >/dev/null 2>&1 ||
+    die "no application-default credentials.
   Run: gcloud auth application-default login"
+fi
 
-if [[ -f "$TF_DIR/backend.tf" && -f "$TF_DIR/.terraform/terraform.tfstate" ]]; then
+if [[ -f "$TF_DIR/backend.tf" && -d "$TF_DIR/.terraform" ]]; then
+  converged "state backend initialised"
+elif [[ -d "$TF_DIR/.terraform" && -f "$TF_DIR/terraform.tfstate" ]]; then
   converged "state backend initialised"
 else
   step "bootstrap the Terraform state backend"
@@ -56,6 +60,10 @@ fi
 BEFORE="$(instance_status)"
 
 if [[ "$BEFORE" == unknown ]]; then
+  if [[ "$PROVIDER" == hetzner ]]; then
+    die "cannot determine whether server '$INSTANCE' exists — the Hetzner API
+  could not be read. Check HETZNER_API_KEY in config.env."
+  fi
   die "cannot determine whether $INSTANCE exists — gcloud could not read it.
 
 $(gcloud_identity_hint)"
@@ -76,7 +84,7 @@ absent)
   ;;
 TERMINATED)
   step "start $INSTANCE (a stopped VM re-runs its startup script on boot)"
-  gcloud_instance start
+  instance_start
   "$SCRIPT_DIR"/wait-ready.sh
   ;;
 RUNNING)
@@ -85,9 +93,13 @@ RUNNING)
   else
     step "deliver the auth key to the running VM"
     echo "  $INSTANCE is RUNNING but not online in the tailnet, so it never"
-    echo "  consumed a key. 'apply' cannot fix this: GCE only runs"
-    echo "  startup-script at boot, so re-trigger it explicitly."
-    if ! rerun_startup_script "$METHOD"; then
+    echo "  consumed a key. 'apply' cannot fix this: the startup script only"
+    echo "  runs at boot, so re-trigger it explicitly."
+    if [[ "$PROVIDER" == hetzner ]]; then
+      warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
+  cannot be delivered remotely. Open the Hetzner Cloud web console (VNC) for
+  $INSTANCE, or use a rescue system — then fix /etc/agent/authkey or reboot."
+    elif ! rerun_startup_script "$METHOD"; then
       if [[ "$METHOD" == reboot ]]; then
         die "could not stop/start $INSTANCE — see the gcloud error above."
       fi

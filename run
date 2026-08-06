@@ -44,7 +44,7 @@ Tailscale
 
 Misc
   ssh [args]       SSH to the box over Tailscale (interactive)
-  tf <args>        Raw terraform in terraform/ (e.g. ./run tf state list)
+  tf <args>        Raw terraform in terraform/<provider>/ (e.g. ./run tf state list)
   fmt              terraform fmt
   validate         terraform fmt -check + validate + bash -n on every script
   check            validate + verify
