@@ -109,6 +109,9 @@ sudo sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' \
   && echo "sshd_passauth=off" || echo "sshd_passauth=ON"
 sudo sshd -T 2>/dev/null | grep -qx 'permitrootlogin no' \
   && echo "sshd_rootlogin=off" || echo "sshd_rootlogin=ON"
+sudo sshd -T 2>/dev/null | grep -qx 'kbdinteractiveauthentication no' \
+  && echo "sshd_kbdinteractive=off" || echo "sshd_kbdinteractive=ON"
+echo "startup_script_mode=$(stat -c %a /usr/local/sbin/agent-startup 2>/dev/null || echo missing)"
 
 systemctl is-active exit-node-watch 2>/dev/null | grep -qx active \
   && echo "watchdog=active" || echo "watchdog=inactive"
@@ -143,6 +146,8 @@ else
   assert "$SSH_USER password is locked" "$(fact "$VM_FACTS" passwd_state)" "L"
   assert "sshd PasswordAuthentication off" "$(fact "$VM_FACTS" sshd_passauth)" "off"
   assert "sshd PermitRootLogin off" "$(fact "$VM_FACTS" sshd_rootlogin)" "off"
+  assert "sshd KbdInteractiveAuthentication off" "$(fact "$VM_FACTS" sshd_kbdinteractive)" "off"
+  assert "startup script mode 700" "$(fact "$VM_FACTS" startup_script_mode)" "700"
   assert "exit-node watchdog running" "$(fact "$VM_FACTS" watchdog)" "active"
   assert "exit-node watchdog script present" "$(fact "$VM_FACTS" watchdog_script)" "present"
   assert "fzf installed" "$(fact "$VM_FACTS" fzf)" "present"

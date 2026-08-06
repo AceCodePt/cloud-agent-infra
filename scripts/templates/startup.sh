@@ -13,12 +13,19 @@ DATA_MNT="/mnt/data"
 USER_NAME="__USER__"
 INSTANCE_NAME="__INSTANCE__"
 
+# Guard the sudoers drop-in: an unvalidated username could inject rules.
+if [ -z "$USER_NAME" ] || [ "$USER_NAME" != "${USER_NAME#-}" ] || \
+   [ -n "${USER_NAME//[A-Za-z0-9._-]/}" ]; then
+  echo "!! invalid USER_NAME '$USER_NAME' (want ^[A-Za-z0-9._-]+$); skipping per-user setup"
+  USER_NAME=""
+fi
 # Install this script as a re-runnable systemd unit so "re-run phase A" is
 # `systemctl restart agent-startup` — no cloud vendor's metadata runner needed.
 # cloud-init/user_data only delivers this file once; the unit owns every later run.
 if [ "$(readlink -f "$0" 2>/dev/null || echo "$0")" != "/usr/local/sbin/agent-startup" ]; then
   cp "$0" /usr/local/sbin/agent-startup
-  chmod +x /usr/local/sbin/agent-startup
+  # 700: the rendered script embeds the single-use tailscale auth key until join
+  chmod 700 /usr/local/sbin/agent-startup
 fi
 
 if [ ! -f /etc/systemd/system/agent-startup.service ]; then
@@ -45,8 +52,13 @@ fi
 mkdir -p "$DATA_MNT"
 if ! blkid -L "$DATA_LABEL" >/dev/null 2>&1; then
   if [ -b "$DATA_DEV" ]; then
-    echo ">> formatting fresh data disk $DATA_DEV (label $DATA_LABEL)"
-    mkfs.ext4 -F -L "$DATA_LABEL" "$DATA_DEV"
+    # Only a blank provider-attached disk is safe to format.
+    if [ -n "$(blkid -o value -s TYPE "$DATA_DEV" 2>/dev/null || true)" ]; then
+      echo "!! $DATA_DEV already has a filesystem but no label $DATA_LABEL; NOT reformatting"
+    else
+      echo ">> formatting fresh data disk $DATA_DEV (label $DATA_LABEL)"
+      mkfs.ext4 -F -L "$DATA_LABEL" "$DATA_DEV"
+    fi
   else
     echo "!! data device $DATA_DEV not found at first boot"
   fi
@@ -69,7 +81,20 @@ fi
 $APT update
 $APT install -y curl ca-certificates sudo
 if ! command -v tailscale >/dev/null 2>&1; then
-  curl -fsSL https://tailscale.com/install.sh | sh
+  echo ">> installing tailscale (install.sh fetched, sanity-checked, executed)"
+  TS_INSTALL="$(mktemp)"
+  if curl -fsSL https://tailscale.com/install.sh -o "$TS_INSTALL"; then
+    # Never run a remote script unvetted; the repo key still GPG-verifies what it installs.
+    if head -n1 "$TS_INSTALL" | grep -qE '^#!.*(ba)?sh' \
+        && grep -qiE 'pkgs\.tailscale\.com' "$TS_INSTALL"; then
+      bash "$TS_INSTALL"
+    else
+      echo "!! tailscale install.sh failed sanity checks; refusing to execute"
+    fi
+  else
+    echo "!! could not fetch tailscale install.sh"
+  fi
+  rm -f "$TS_INSTALL"
 fi
 
 mkdir -p "$DATA_MNT/tailscale"
@@ -92,11 +117,13 @@ if ! grep -qE "[[:space:]]/var/lib/tailscale[[:space:]]" /etc/fstab; then
   echo "$DATA_MNT/tailscale /var/lib/tailscale none bind,nofail 0 0" >> /etc/fstab
 fi
 
-if ! id "$USER_NAME" >/dev/null 2>&1; then
-  useradd -m -G sudo -s /bin/bash "$USER_NAME"
+if [ -n "$USER_NAME" ]; then
+  if ! id "$USER_NAME" >/dev/null 2>&1; then
+    useradd -m -G sudo -s /bin/bash "$USER_NAME"
+  fi
+  echo "$USER_NAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/agent-sudo
+  chmod 440 /etc/sudoers.d/agent-sudo
 fi
-echo "$USER_NAME ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/agent-sudo
-chmod 440 /etc/sudoers.d/agent-sudo
 
 # sshd hardening: this is what keeps the only "other way in" to a physical
 # console (Hetzner web console, GCP serial console). Key-only over Tailscale.
@@ -108,6 +135,7 @@ rm -f /etc/ssh/sshd_config.d/99-agent-hardening.conf
 cat > /etc/ssh/sshd_config.d/10-agent-hardening.conf <<'HARD'
 PasswordAuthentication no
 PermitRootLogin no
+KbdInteractiveAuthentication no
 HARD
 chmod 644 /etc/ssh/sshd_config.d/10-agent-hardening.conf
 
@@ -134,22 +162,35 @@ for _ in $(seq 1 15); do
 done
 echo ">> tailscale BackendState=${TS_STATE:-unknown}"
 
+TS_JOINED=0
 if [ "$TS_STATE" = "Running" ]; then
+  TS_JOINED=1
   tailscale up --ssh --hostname="$INSTANCE_NAME" \
     || echo ">> tailscale up (no key) returned non-zero; already up?"
 elif [ -n "$AUTHKEY" ]; then
-  tailscale up --ssh --hostname="$INSTANCE_NAME" --authkey="$AUTHKEY" ||
+  if tailscale up --ssh --hostname="$INSTANCE_NAME" --authkey="$AUTHKEY"; then
+    TS_JOINED=1
+  else
     echo ">> tailscale up FAILED: the one-off key is likely spent, revoked or expired.
     >> Recover with:  ./run rekey     (writes a key over SSH and restarts agent-startup)"
+  fi
 else
   echo ">> no tailscale auth key available; this box cannot join the tailnet."
+fi
+
+# The key is spent once joined; don't leave it on disk.
+if [ "$TS_JOINED" = 1 ]; then
+  rm -f /etc/agent/authkey
+  sed -ri 's/tskey-auth-[A-Za-z0-9_-]+/tskey-auth-SPENT/g' /usr/local/sbin/agent-startup 2>/dev/null || true
 fi
 
 # Let the agent user run `tailscale` without sudo (status/up/set, etc.).
 # Same as the manual `sudo tailscale set --operator=$USER`, run from a login
 # shell — but this script runs as root, so name the user explicitly.
-sudo tailscale set --operator="$USER_NAME" \
-  || echo ">> tailscale set --operator failed (tailscale may not be up yet)"
+if [ -n "$USER_NAME" ]; then
+  sudo tailscale set --operator="$USER_NAME" \
+    || echo ">> tailscale set --operator failed (tailscale may not be up yet)"
+fi
 tailscale set --exit-node=auto:any \
   || echo ">> tailscale set --exit-node=auto:any failed (tailscale may not be up yet)"
 
@@ -276,7 +317,9 @@ CHROME
 chmod 755 /usr/local/bin/headed-chromium
 
 mkdir -p "$DATA_MNT/browser" "$DATA_MNT/app"
-chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
+if [ -n "$USER_NAME" ]; then
+  chown -R "$USER_NAME:$USER_NAME" "$DATA_MNT/browser" "$DATA_MNT/app"
+fi
 
 cat > /usr/local/sbin/agent-install-packages <<'PKGS'
 #!/usr/bin/env bash
