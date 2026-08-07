@@ -119,7 +119,16 @@ validate)
   tf fmt -check
   [[ -d "$TF_DIR/.terraform" ]] || tf init -backend=false -input=false >/dev/null
   tf validate
-  for f in scripts/*.sh run; do bash -n "$f" || die "$f does not parse"; done
+  for f in scripts/*.sh scripts/templates/*.sh run; do
+    bash -n "$f" || die "$f does not parse"
+    if command -v shellcheck >/dev/null 2>&1; then
+      shellcheck -S error "$f" || die "shellcheck: $f"
+    fi
+  done
+  if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks dir --no-banner . >/dev/null 2>&1 || die "gitleaks found a secret"
+    echo "gitleaks clean"
+  fi
   echo "all scripts parse"
   ;;
 check)

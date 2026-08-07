@@ -1,0 +1,5 @@
+title = "cloud-agent-infra"
+
+[allowlist]
+  description = "shell variable references, not secrets"
+  regexes = ['''\$API_KEY''']

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 022
-exec > >(tee /var/log/startup-agent.log) 2>&1
+# umask 027 inside the process substitution: the log is created by tee, so it
+# would be 644 under the script's umask; keep root-only-ish (640) instead.
+exec > >(umask 027; tee /var/log/startup-agent.log) 2>&1
 echo "=== agent startup $(date -u) ==="
 
 export DEBIAN_FRONTEND=noninteractive
@@ -292,6 +294,9 @@ systemctl start xvfb.service
 echo 'export DISPLAY=:99' > /etc/profile.d/display.sh
 chmod 644 /etc/profile.d/display.sh
 
+# -nopw on purpose: the unit is never enabled and only runs under `./run
+# browser`, which tunnels VNC over SSH — the SSH boundary is the auth. A
+# password here would just be an extra secret to lose.
 cat > /etc/systemd/system/x11vnc.service <<'UNIT'
 [Unit]
 Description=x11vnc on DISPLAY :99, loopback only (manual start, for hand-login)
