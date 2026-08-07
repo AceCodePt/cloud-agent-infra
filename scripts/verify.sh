@@ -118,12 +118,16 @@ systemctl is-active exit-node-watch 2>/dev/null | grep -qx active \
 [ -x /usr/local/sbin/exit-node-watch ] \
   && echo "watchdog_script=present" || echo "watchdog_script=missing"
 
-for t in fzf direnv mise; do
+for t in fzf direnv mise nvim unzip; do
   command -v "$t" >/dev/null 2>&1 \
     && echo "${t}=present" || echo "${t}=missing"
 done
 [ -x "$HOME/.local/share/mise/shims/go" ] \
   && echo "go_shim=present" || echo "go_shim=missing"
+[ -x "$HOME/.local/share/mise/shims/cargo" ] \
+  && echo "cargo_shim=present" || echo "cargo_shim=missing"
+[ -x "$HOME/.local/share/mise/shims/node" ] \
+  && echo "node_shim=present" || echo "node_shim=missing"
 VMEOF
 )"
 
@@ -154,6 +158,10 @@ else
   assert "direnv installed" "$(fact "$VM_FACTS" direnv)" "present"
   assert "mise installed" "$(fact "$VM_FACTS" mise)" "present"
   assert "go installed via mise" "$(fact "$VM_FACTS" go_shim)" "present"
+  assert "cargo installed via mise" "$(fact "$VM_FACTS" cargo_shim)" "present"
+  assert "node installed via mise" "$(fact "$VM_FACTS" node_shim)" "present"
+  assert "neovim installed" "$(fact "$VM_FACTS" nvim)" "present"
+  assert "unzip installed" "$(fact "$VM_FACTS" unzip)" "present"
 fi
 
 section "Browser stack (sidecar)"

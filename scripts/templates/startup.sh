@@ -344,7 +344,30 @@ echo "=== agent packages $(date -u) ==="
 $APT update
 
 echo ">> wave 1: CLI tools"
-$APT install -y git stow tmux neovim python3-pip zsh gh fzf direnv gpg
+$APT install -y git stow tmux python3-pip zsh gh fzf direnv gpg unzip libclang-dev
+
+echo ">> neovim: latest stable from GitHub releases (not the Debian 0.7 apt package)"
+NVIM_DIR="/opt/nvim-linux-x86_64"
+if ! [ -x "$NVIM_DIR/bin/nvim" ]; then
+  NVIM_TARBALL="$(mktemp)"
+  if curl -fsSL https://github.com/neovim/neovim/releases/download/stable/nvim-linux-x86_64.tar.gz \
+      -o "$NVIM_TARBALL"; then
+    rm -rf "$NVIM_DIR"
+    mkdir -p /opt
+    tar -xzf "$NVIM_TARBALL" -C /opt
+  else
+    echo "!! could not download neovim from GitHub releases"
+  fi
+  rm -f "$NVIM_TARBALL"
+fi
+if [ -x "$NVIM_DIR/bin/nvim" ]; then
+  ln -sf "$NVIM_DIR/bin/nvim" /usr/local/bin/nvim
+else
+  echo "!! nvim not installed; falling back to the Debian apt package"
+  $APT install -y neovim || true
+fi
+# Remove the apt-installed neovim so it doesn't shadow the GitHub binary
+$APT remove -y neovim 2>/dev/null || true
 
 # The account phase A created. Pinned by name (not a uid heuristic) so a
 # cloud-init default user on a non-GCP image cannot hijack the usermod.
@@ -375,6 +398,14 @@ $APT install -y mise
 if [ -n "$AGENT_USER" ] && command -v mise >/dev/null 2>&1; then
   echo ">> go@latest for $AGENT_USER via mise"
   sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" mise use -g go@latest
+  echo ">> rust@latest for $AGENT_USER via mise"
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" mise use -g rust@latest
+  echo ">> tree-sitter-cli for nvim-treesitter parser compilation"
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" \
+    PATH="$HOME/.local/share/mise/shims:$HOME/.cargo/bin:$PATH" \
+    cargo install tree-sitter-cli 2>&1 || echo "!! tree-sitter-cli install failed (non-fatal)"
+  echo ">> node@latest for $AGENT_USER via mise"
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" mise use -g node@latest
 fi
 
 echo ">> wave 2: upgrade + headed-browser stack"
