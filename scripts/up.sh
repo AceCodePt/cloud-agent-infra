@@ -50,9 +50,14 @@ if KEY_STATE="$("$SCRIPT_DIR"/tailscale-api.sh check 2>&1)"; then
     converged "${KEY_STATE#>> }"
   fi
 else
-  step "mint a fresh Tailscale auth key"
-  echo "  reason: the current key is not usable —"
-  printf '%s\n' "$KEY_STATE" | sed 's/^/  | /'
+  KEY_RC=$?
+  if [[ "$KEY_RC" -eq 2 ]]; then
+    step "no Tailscale auth key present (the default state) — minting one"
+  else
+    step "mint a fresh Tailscale auth key"
+    echo "  reason: the current key is not usable —"
+    printf '%s\n' "$KEY_STATE" | sed 's/^/  | /'
+  fi
   "$SCRIPT_DIR"/tailscale-api.sh mint
   "$SCRIPT_DIR"/tailscale-api.sh check   # a key revoked mid-mint must not be baked in
 fi
