@@ -39,39 +39,36 @@ nothing about any of them.
 
 ## What exists
 
-Asserted by `./run verify` — 18 checks, passing — and it has survived a full
+Asserted by `./run verify` — **28 checks, passing** — and it has survived a full
 `cleanup --yes` + rebuild cycle.
 
-**The box**
+**The box** (active provider: `PROVIDER=oci`)
 
-- Hetzner CX33 (4 vCPU / 8 GB), `nbg1` Nuremberg, Debian 12 — ≈ $11.55/mo all-in
-- Zero public ingress; Tailscale-only access (Hetzner firewall, empty rule set =
-  block inbound / allow outbound), with Hetzner's web console + rescue system as
-  break-glass
+- OCI **Always Free A1.Flex** (2 OCPU / 12 GB), `il-jerusalem-1`, booting OCI's
+  **stock Oracle Linux 9** platform image — no custom image, no build/upload/
+  import pipeline (the Arch golden-image path was removed; see
+  [`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md))
+- Zero public ingress: no public IP + a security list with no ingress rules;
+  Tailscale-only access, with the OCI serial console (Cloud Shell) as break-glass
 - Tailscale one-off auth keys minted via API and validated before every apply
-- Tailscale state bind-mounted onto the data volume (by `LABEL=cloud-agent-data`)
-  — survives server replacement, but not volume destruction
-- Two-phase boot (`scripts/templates/startup.debian.sh`): phase A reaches the
-  tailnet in ~1 min, phase B installs the rest out of band
+- Tailscale state bind-mounted onto the block volume (by `LABEL=cloud-agent-data`)
+  — survives instance replacement, but not volume destruction
+- Two-phase boot (`scripts/templates/startup.ol.sh`): phase A reaches the tailnet
+  in ~3-4 min, phase B (dnf + EPEL + Flatpak Chromium + zram + dnf-automatic)
+  installs the rest out of band
 - `./run up` — idempotent convergence, never destructive
-- Shared startup template + `PROVIDER` shim in `scripts/lib.sh`; the GCP Terraform
-  path remains for reference
-
-**OCI path (free tier)**
-
-The same box on OCI's Always Free A1 boots **stock Oracle Linux 9** with
-`scripts/templates/startup.ol.sh` — no custom image, no build/upload/import
-pipeline. First boot joins the tailnet in ~1-3 min; phase B (dnf + EPEL + Flatpak
-Chromium + Xvfb + zram) finishes in the background. The Arch golden-image path was
-removed; see [`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md).
+- Shared startup templates + `PROVIDER` shim in `scripts/lib.sh`; the Hetzner
+  (Debian 12) and GCP Terraform paths remain for reference
 
 **On the box** (all from phase B, so all reproducible)
 
-- CLI: `git`, `gh`, `stow`, `tmux`, `neovim` (from GitHub releases, not the Debian 0.7 apt package), `python3-pip`, `build-essential`,
-  `fzf`, `direnv`, `unzip`, `libclang-dev`, `mise` (go, rust, node, and tree-sitter-cli installed through mise/cargo per the account's global config)
-- Xvfb `:99` + Chromium with one wrapper, `headed-chromium` (CDP, persistent
-  profile). An app that needs a browser tied to a logged-in account deploys its
-  own wrapper — this repo knows nothing about accounts.
+- CLI: `git`, `gh`, `stow`, `tmux`, `python3-pip`, the `Development Tools`
+  group, `fzf`, `unzip` via dnf+EPEL; `neovim` (GitHub release), `direnv`
+  (GitHub static binary), and `mise` (GitHub release; go, rust, node, and
+  tree-sitter-cli installed through mise/cargo per the account's global config)
+- Xvfb `:99` + Chromium with one wrapper, `headed-chromium` (Flatpak build, CDP,
+  persistent profile). An app that needs a browser tied to a logged-in account
+  deploys its own wrapper — this repo knows nothing about accounts.
 - `x11vnc`, installed but not enabled — started by hand via `./run browser`
 - zram compressed swap
 
@@ -91,19 +88,21 @@ allowed. Re-check if a client contract says otherwise — and note that at ~$19/
 per box, one-server-per-client becomes affordable isolation that GCP pricing
 forecloses.
 
-**2. Provider migration.** **Made 2026-08-05** — the box is now Hetzner CX33
-(≈ $11.55/mo vs GCP's $60.25). The break-glass premise that blocked it (GCP's
-IAP being the only second escape) was partly self-imposed; see
-[`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md).
+**2. Provider history.** The box moved GCP → Hetzner on 2026-08-05
+(`docs/decisions/infrastructure.md`), then to OCI's free-tier A1 on 2026-08-10 —
+free, first-party Oracle Linux, and a verified 28/28 `./run verify`. The Hetzner
+path remains the paid fallback if OCI's free-tier A1 capacity ever gets flaky or
+the box needs to leave the Jerusalem home region.
 
 ---
 
 ## Risks
 
-**Capacity.** The box is `e2-standard-2`. The numbers behind whether that holds
-for any particular workload — idle floor, browser memory, how the box degrades
-under load — are in `docs/measurements.md`. Slow is acceptable; unreachable is
-not, and there is no public inbound to fall back on. `verify.sh` is the tripwire.
+**Capacity.** The box is an A1.Flex with 2 OCPU / 12 GB. The numbers behind
+whether that holds for any particular workload — idle floor, browser memory, how
+the box degrades under load — are in `docs/measurements.md`. Slow is acceptable;
+unreachable is not, and there is no public inbound to fall back on. `verify.sh`
+is the tripwire.
 
 **Process.** This project has drifted before: a session that began with a revoked
 Tailscale key ended up planning a provider migration, via zram, Thorium, Openbox

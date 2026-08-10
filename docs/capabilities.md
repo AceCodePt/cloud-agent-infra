@@ -5,10 +5,11 @@ What this repo can do, and how to reach it. The map between **commands**
 `README.md` is the entry point; `docs/operating.md` is the how-to; `docs/decisions/`
 is the why.
 
-The box is a Hetzner Cloud server reached over Tailscale
-(`ssh <user>@cloud-agent`). Two places do work: **the workstation** (this repo)
-and **the box** (provisioned by phase B, or pushed over ssh). Every table below
-says which. (`PROVIDER` in `config.env` selects the cloud: `hetzner` or `gcp`.)
+The box is an OCI free-tier instance (Oracle Linux 9, Ampere A1) reached over
+Tailscale (`ssh <user>@cloud-agent`). Two places do work: **the workstation**
+(this repo) and **the box** (provisioned by phase B, or pushed over ssh). Every
+table below says which. (`PROVIDER` in `config.env` selects the cloud: `oci` —
+active — or the reference paths `hetzner` and `gcp`.)
 
 ---
 
@@ -30,6 +31,7 @@ says which. (`PROVIDER` in `config.env` selects the cloud: `hetzner` or `gcp`.)
 | `./run rebuild` | `cleanup → bootstrap → apply → wait → verify`. **Destroys the data disk** | multiple |
 | `./run cleanup [--yes --keep-*]` | Tear down + delete tailnet node. Full wipe by default | `scripts/cleanup.sh` |
 | `./run bootstrap` | `terraform init` + mint auth key (GCP path: also GCS state bucket + `backend.tf`) | `scripts/bootstrap.sh` |
+| `./run setup [oci\|hetzner\|gcp]` | Check what you need per provider (API keys, CLI, credentials) | `scripts/setup.sh` |
 
 ### Browser — reach the box's display, by hand
 

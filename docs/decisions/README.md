@@ -31,7 +31,7 @@ the premise is unevidenced".
 | Native VM, not a container on COS | Made |
 | Debian 12 from Google's image family, not Arch | Made |
 | Oracle Linux 9 from OCI platform images, not a custom Arch image | Made |
-| Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; Hetzner uses empty-rule firewall + console/rescue) |
+| Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; OCI uses no public IP + serial console, Hetzner an empty-rule firewall) |
 | Separate persistent data disk at `/mnt/data` | Made |
 | Two-phase boot | Made |
 | One-off auth keys minted per build, validated before apply | Made |
@@ -41,7 +41,7 @@ the premise is unevidenced".
 | Stay on GCP for now | Superseded |
 | Static external IP | Reversed |
 | Right-sizing the box | Parked |
-| Provider migration | Made (Hetzner CX33, 2026-08-05) |
+| Provider migration | Made (Hetzner CX33, 2026-08-05; OCI free-tier A1, 2026-08-10) |
 
 ### [browser.md](browser.md) — the browser on the box
 

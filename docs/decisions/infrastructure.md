@@ -193,11 +193,16 @@ when it does, buy cores.
 `hardwareConcurrency: 2` is visible in the browser fingerprint and is only
 fixable by paying for a bigger machine type. Accepted for now.
 
-## Provider migration — **Made (Hetzner)**
+## Provider migration — **Made (Hetzner), then OCI (2026-08-10)**
 
 The box moved from GCP `e2-standard-2` ($60.25/mo, me-west1) to Hetzner CX33
 4 vCPU / 8 GB + 20 GB Volume ($10.59 + $0.96 ≈ **$11.55/mo**, nbg1, 61–62 ms
 from the workstation). Evidence in `../measurements.md`.
+
+On 2026-08-10 the active box moved again, to OCI's **Always Free A1** (2 OCPU /
+12 GB, `il-jerusalem-1`, stock Oracle Linux 9) — see the "Oracle Linux 9 from
+OCI platform images" decision above. The Hetzner path stays as the paid
+fallback. The rest of this section is the record of the GCP → Hetzner move.
 
 What unblocked it:
 

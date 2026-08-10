@@ -101,6 +101,7 @@ VM_FACTS="$(ssh_vm QUICK="$QUICK" PROVIDER="$PROVIDER" 'bash -s' 2>/dev/null <<'
 set -u
 export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
 echo "reachable=yes"
+echo "packages=$(systemctl is-active agent-packages 2>/dev/null || true)"
 if mountpoint -q /mnt/data; then
   echo "data_mounted=yes"
 else
@@ -170,14 +171,27 @@ else
   assert "startup script mode 700" "$(fact "$VM_FACTS" startup_script_mode)" "700"
   assert "exit-node watchdog running" "$(fact "$VM_FACTS" watchdog)" "active"
   assert "exit-node watchdog script present" "$(fact "$VM_FACTS" watchdog_script)" "present"
-  assert "fzf installed" "$(fact "$VM_FACTS" fzf)" "present"
-  assert "direnv installed" "$(fact "$VM_FACTS" direnv)" "present"
-  assert "mise installed" "$(fact "$VM_FACTS" mise)" "present"
-  assert "go installed via mise" "$(fact "$VM_FACTS" go_shim)" "present"
-  assert "cargo installed via mise" "$(fact "$VM_FACTS" cargo_shim)" "present"
-  assert "node installed via mise" "$(fact "$VM_FACTS" node_shim)" "present"
-  assert "neovim installed" "$(fact "$VM_FACTS" nvim)" "present"
-  assert "unzip installed" "$(fact "$VM_FACTS" unzip)" "present"
+
+  # Phase B owns every CLI tool below, so while it is re-running (a reboot, or
+  # agent-startup restarting it) dnf can be mid-transaction replacing packages
+  # and mise rewrites its shims — the tools are transiently absent. Mirror the
+  # browser sidecar: SKIP while activating, FAIL only if it truly never ran.
+  PKGS="$(fact "$VM_FACTS" packages)"
+  pkg_assert() { # pkg_assert <description> <fact>
+    case "$PKGS" in
+    active) assert "$1" "$(fact "$VM_FACTS" "$2")" "present" ;;
+    activating) skip "$1 (phase B still running)" ;;
+    *) bad "$1 — phase B is not active (agent-packages: ${PKGS:-unknown})" ;;
+    esac
+  }
+  pkg_assert "fzf installed" fzf
+  pkg_assert "direnv installed" direnv
+  pkg_assert "mise installed" mise
+  pkg_assert "go installed via mise" go_shim
+  pkg_assert "cargo installed via mise" cargo_shim
+  pkg_assert "node installed via mise" node_shim
+  pkg_assert "neovim installed" nvim
+  pkg_assert "unzip installed" unzip
 fi
 
 section "Browser stack (sidecar)"

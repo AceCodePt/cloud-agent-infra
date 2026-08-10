@@ -1,10 +1,11 @@
 # cloud-agent-infra
 
-A cloud-hosted, always-on **Debian box** reached over **Tailscale** from another
-device — laptop or any tailnet node: a small Hetzner Cloud VM (CX33, Nuremberg)
-running Debian 12, built and managed entirely as code (Terraform + bash), with a
-single source of truth for configuration. The infrastructure connects and manages
-itself to your tailnet and stays reachable while your local machine is asleep.
+A cloud-hosted, always-on **Oracle Linux box** reached over **Tailscale** from
+another device — laptop or any tailnet node: a free-tier OCI VM (Ampere A1,
+`il-jerusalem-1`) running stock Oracle Linux 9, built and managed entirely as
+code (Terraform + bash), with a single source of truth for configuration. The
+infrastructure connects and manages itself to your tailnet and stays reachable
+while your local machine is asleep.
 
 This repo is the **infrastructure layer only**: it builds the VM, joins it to the
 tailnet, keeps it verified, and gives you hand access to it (SSH, and a browser
@@ -29,17 +30,17 @@ approval lives in the sibling repo
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Hetzner CX33  "cloud-agent"   (Debian 12, nbg1 Nuremberg)  │
-│                                                             │
-│   • Debian stable + apt; unattended security updates        │
-│   • tailscaled (systemd) -> joins tailnet as "cloud-agent"  │
-│   • Tailscale SSH: `ssh <user>@cloud-agent` lands here      │
-│   • Xvfb :99 + headed-chromium (CDP, persistent profile)    │
-│   • x11vnc, loopback only, started by hand (`./run browser`)│
-│   • Persistent data volume mounted at /mnt/data             │
-│     (writable root — no COS quirks)                         │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  OCI A1.Flex  "cloud-agent"  (Oracle Linux 9, il-jerusalem-1) │
+│  2 OCPU / 12 GB, Always Free, no public IP                    │
+│                                                               │
+│   • stock Oracle Linux 9 platform image + dnf                 │
+│   • tailscaled (systemd) -> joins tailnet as "cloud-agent"    │
+│   • hardened OpenSSH: `ssh <user>@cloud-agent` lands here     │
+│   • Xvfb :99 + headed-chromium (Flatpak, CDP, persistent)     │
+│   • x11vnc, loopback only, started by hand (`./run browser`)  │
+│   • Persistent block volume mounted at /mnt/data              │
+└──────────────────────────────────────────────────────────────┘
           ▲
           │  Tailscale (private tailnet, no public inbound)
           ▼
@@ -124,13 +125,15 @@ cp example.config.env config.env   # then edit the values
 From an empty project that does the whole thing: `terraform init` → one-off auth
 key → server + volume → wait for first boot → verify. `docs/operating.md` has the
 config reference, the prerequisites, and the day-to-day commands (connect,
-browser, teardown). Prerequisites: a Hetzner Cloud API token and a Tailscale API
-key in `config.env`; `terraform` locally. (The GCP path, if `PROVIDER=gcp`, needs
-`gcloud` + application-default credentials instead.)
+browser, teardown). Prerequisites: OCI credentials
+(`OCI_TENANCY_OCID` / `OCI_USER_OCID` / `OCI_FINGERPRINT` /
+`OCI_PRIVATE_KEY_PATH`) and a Tailscale API key in `config.env`; `terraform`
+and the `oci` CLI locally. (The `PROVIDER=hetzner` path needs a Hetzner API
+token instead; `PROVIDER=gcp` needs `gcloud` + application-default credentials.)
 
 ## Teardown
 
 ```sh
-./run cleanup                # FULL wipe (server + volume + local state + tailnet node)
-./run tf destroy -target=hcloud_server.agent && ./run up   # replace the server, keep data
+./run cleanup                # FULL wipe (compute + local state + tailnet node)
+./run tf destroy -target=oci_core_instance.agent && ./run up   # replace the box, keep data
 ```

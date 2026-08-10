@@ -19,18 +19,27 @@ cp example.config.env config.env
 
 ```sh
 # config.env  (git-ignored — contains secrets)
-PROVIDER="hetzner"             # gcp | hetzner
+PROVIDER="oci"                     # oci (active) | hetzner | gcp
 TF_VAR_instance_name="cloud-agent"   # also the tailnet hostname
 TF_VAR_ssh_user="youruser"           # your Unix user on the box
-TF_VAR_machine_type="cx33"           # 4 vCPU/8GB; cx23 (2/4) is leaner
+TF_VAR_machine_type="VM.Standard.A1.Flex"  # OCI Ampere A1 (Always Free eligible)
+TF_VAR_ocpus="2"                     # free tier: up to 4
+TF_VAR_memory_in_gbs="12"            # free tier: up to 24
 
-# Hetzner Cloud API token (console -> Security -> API Tokens). Also sets
-# TF_VAR_hcloud_token for Terraform.
+# OCI (Oracle Cloud Infrastructure). Home region il-jerusalem-1 holds the
+# Always Free capacity. Credentials for the `oci` CLI + Terraform.
+OCI_TENANCY_OCID="ocid1.tenancy.oc1..."
+OCI_USER_OCID="ocid1.user.oc1..."
+OCI_FINGERPRINT="xx:xx:..."
+OCI_PRIVATE_KEY_PATH="~/.oci/oci_api_key.pem"
+TF_VAR_region="il-jerusalem-1"
+
+# Hetzner (reference path — set PROVIDER=hetzner and these take effect)
 HETZNER_API_KEY="your-hetzner-api-token"
-TF_VAR_location="nbg1"             # Nuremberg; fsn1 Falkenstein, hel1 Helsinki
-TF_VAR_data_disk_size_gb="20"      # optional volume size (defaults to 20)
+TF_VAR_location="nbg1"
+TF_VAR_data_disk_size_gb="20"
 
-# GCP (unused while PROVIDER=hetzner; kept for switching back)
+# GCP (unused while PROVIDER=oci; kept for switching back)
 TF_VAR_project_id="your-project-id"
 TF_VAR_region="me-west1"
 TF_VAR_zone="me-west1-a"
@@ -39,7 +48,8 @@ TF_VAR_zone="me-west1-a"
 TAILSCALE_API_KEY="tskey-api-..."
 ```
 
-`TF_VAR_data_disk_size_gb` is optional — omit it to use the default (20 GB).
+`TF_VAR_data_disk_size_gb` is optional — omit it to use the default (50 GB on
+OCI, 20 GB on Hetzner).
 
 > **Do not** also set `TF_VAR_tailscale_auth_key`. Terraform ranks
 > `terraform/tailscale.auto.tfvars` (written by `mint`) above `TF_VAR_*` env vars,
@@ -47,8 +57,9 @@ TAILSCALE_API_KEY="tskey-api-..."
 > as a long-spent key — if that file ever goes missing. Set one or the other.
 
 > **`TF_VAR_ssh_public_key` is optional and GCP-path-only** — it authorizes
-> your own key for sshd so you can connect through a raw IAP tunnel. On Hetzner
-> there is no IAP; Tailscale SSH needs no key at all. Leave it unset.
+> your own key for sshd so you can connect through a raw IAP tunnel. On OCI
+> your key is injected via instance metadata (`ssh_authorized_keys`); on
+> Hetzner there is no IAP and no key is needed. Leave it unset.
 
 No `export` prefixes, nothing to source or activate. Every entry point calls
 `load_config` (`scripts/lib.sh`), which wraps the source in `set -a` so `TF_VAR_*`
@@ -71,10 +82,12 @@ exactly one definition. Full reasoning:
 
 ## Prerequisites
 
-- A Hetzner Cloud account with an **API token** (Project → Security → API Tokens)
-  in `config.env`, plus a Tailscale **API key** (admin console → Settings → Keys)
-  to mint the one-off auth key per build.
-- `terraform` installed locally. (The GCP provider path also needs `gcloud` and
+- An OCI tenancy (Always Free eligible) with the API key pair uploaded — set
+  `OCI_TENANCY_OCID`, `OCI_USER_OCID`, `OCI_FINGERPRINT`,
+  `OCI_PRIVATE_KEY_PATH` in `config.env`, plus a Tailscale **API key** (admin
+  console → Settings → Keys) to mint the one-off auth key per build.
+- `terraform` and the `oci` CLI installed locally. (The `PROVIDER=hetzner` path
+  needs a Hetzner API token instead; `PROVIDER=gcp` needs `gcloud` and
   application-default credentials — see `example.config.env`.)
 
 ---
@@ -126,14 +139,16 @@ mount the data volume (by `LABEL=cloud-agent-data`), install Tailscale, create
 your user, `tailscale up`. The single-use auth key is spent at the end of
 phase A.
 
-**Phase B (background, ~4 min)** is everything else, in waves: CLI tools, `apt
-upgrade`, and the headed-browser stack (chromium, fonts, Xvfb, xauth, x11vnc,
-`libgl1-mesa-dri`, zram). It runs as `agent-packages.service`, launched with
+**Phase B (background, ~5–10 min on A1)** is everything else, in waves: EPEL,
+CLI tools (git, gh, stow, tmux, fzf, …), the GitHub-release builds of
+neovim/direnv/mise (go, rust, node via mise), a `dnf --allowerasing upgrade`,
+and the headed-browser stack (Flatpak Chromium, Xvfb, xauth, x11vnc, zram,
+dnf-automatic). It runs as `agent-packages.service`, launched with
 `systemctl restart --no-block` by `agent-startup.service` (the systemd unit
 phase A installs), so phase A returns immediately. The default shell for the
 interactive account phase A created is `zsh`.
 
-Measured on Hetzner, not guessed: ~1 min from server created → on the tailnet
+Measured on OCI, not guessed: ~3–4 min from instance created → on the tailnet
 (the GCP box measured `274s → 84s` for the same milestone).
 
 ```sh
@@ -151,20 +166,20 @@ drift.
 
 ### `apply` cannot re-key a running box
 
-The auth key is baked into the boot provisioning (metadata on GCP, cloud-init
-`user_data` on Hetzner) and neither re-reads it after boot. Minting a key and
-re-applying does nothing for a running box. Use:
+The auth key is baked into the boot provisioning (cloud-init `user_data`) and is
+not re-read after boot. Minting a key and re-applying does nothing for a running
+box. Use:
 
 ```sh
-./run rekey            # mint + deliver the key over Tailscale SSH + re-run phase A
+./run rekey            # mint + deliver the key over the tailnet + re-run phase A
 ./run rekey --reboot   # same, but stop/start the box instead
 ```
 
-On Hetzner, `rekey` writes the fresh key to `/etc/agent/authkey` over SSH and
-runs `systemctl restart agent-startup` — phase A is a re-runnable systemd unit,
-not a one-shot metadata script. This only works while the box is reachable over
-the tailnet. If the box is **off** the tailnet, there is no network way in (zero
-public ingress): use the Hetzner Cloud web console or a rescue system to fix
+`rekey` writes the fresh key to `/etc/agent/authkey` over SSH and runs
+`systemctl restart agent-startup` — phase A is a re-runnable systemd unit, not a
+one-shot metadata script. This only works while the box is reachable over the
+tailnet. If the box is **off** the tailnet, there is no network way in (zero
+public ingress): use the OCI serial console (Cloud Shell) to fix
 `/etc/agent/authkey`, then reboot. The startup script only spends a key when the
 node is not already a member.
 
@@ -261,17 +276,17 @@ there.)
 > it is "throw the server away but keep my data", that is:
 >
 > ```sh
-> ./run tf destroy -target=hcloud_server.agent && ./run up
+> ./run tf destroy -target=oci_core_instance.agent && ./run up
 > ```
 
 ---
 
 ## Security: no public inbound
 
-The box is protected by a **Hetzner Cloud firewall** (`terraform/hetzner/firewall.tf`)
-with an **empty rule set** — Hetzner's documented default is that all inbound is
-blocked and all outbound is permitted (the firewall is stateful, so established
-replies return). Tailscale dials out; nothing else can reach the box.
+The instance has **no public IP** (the VNIC is created with
+`assign_public_ip = false`) and its subnet's **security list has no ingress
+rules** — only egress. Tailscale dials out; nothing else can reach the box.
+`verify.sh` asserts both (no public IP, no inbound rule).
 
 There is **no public inbound** — you reach the box over the Tailscale tailnet,
 established outbound. Your user has **passwordless sudo**, acceptable because the
@@ -279,11 +294,13 @@ only way in is your tailnet identity, enforced off-box (`useradd` creates the
 account password-locked, and sshd has `PasswordAuthentication no` +
 `PermitRootLogin no`, so no password would ever match).
 
-Break-glass when Tailscale is the thing that is broken: the Hetzner Cloud **web
-console** (VNC) and the **rescue system** (boots a separate image with a key
-injected via the API). The tty login is unusable by design — the account password
-is locked and root login is off — so a live fix goes through the rescue system or
-a reboot of a repaired disk.
+Break-glass when Tailscale is the thing that is broken: the OCI **serial console**
+via Cloud Shell. The tty login is unusable by design — the account password
+is locked and root login is off — so a live fix goes through the serial console
+or a reboot of a repaired boot volume.
+
+(Reference paths: Hetzner uses an empty-rule-set firewall + web VNC console +
+rescue system; GCP uses IAP as a second way in.)
 
 ---
 
@@ -312,12 +329,12 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
 
 - **GCP's `default` network is wide open** (tcp:22, 3389, icmp from `0.0.0.0/0`).
   On the GCP path, use the dedicated VPC in `terraform/gcp/network.tf`, or delete
-  those rules. On Hetzner, an empty firewall rule set already blocks all inbound.
+  those rules. OCI blocks inbound via a security list with no ingress rules.
 - **Deleting `default-allow-ssh` makes plain `gcloud compute ssh` hang** — it has
   no route in. Use `--tunnel-through-iap`, or rely on Tailscale. (GCP path only.)
-- **Tailscale SSH needs an ACL** granting it. In the tailnet admin console add an
-  `ssh` rule (e.g. `action: accept`, `src: autogroup:member`,
-  `dst: autogroup:self`, `users: [youruser, autogroup:nonroot]`).
+- **Tailscale SSH ACL rules are first-match-wins.** A broad `action: check` rule
+  listed before your `action: accept` rule shadows it — the accept never runs and
+  you get a browser prompt every time. Order specific `accept` rules first.
 - **`tailscale up` won't silently drop a flag.** To change settings toward
   defaults, use `--reset`.
 - **`terraform apply` cannot deliver a new auth key to a running VM.** Use
@@ -340,10 +357,11 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
 - **Key injection on first boot can lag** on a fresh VM; give it a minute.
 - **In an HCL heredoc, `$$` is an escape only before `{`.** `$${VAR}` yields
   `${VAR}`, but `$$VAR` renders as two literal dollars, which bash expands to the
-  **PID**. The startup now lives in a plain file
-  (`scripts/templates/startup.sh`, read via `file()`), so this whole class is
-  gone from new providers; the GCP path's `terraform/gcp/compute.tf` `lifecycle
-  precondition` still fails the apply if any `$$` survives the render.
+  **PID**. The startup now lives in plain files
+  (`scripts/templates/startup.ol.sh` / `startup.debian.sh`, read via `file()`),
+  so this whole class is gone from new providers; the GCP path's
+  `terraform/gcp/compute.tf` `lifecycle precondition` still fails the apply if
+  any `$$` survives the render.
 - **`ssh host cmd arg1 arg2` joins argv with spaces and the remote shell
   re-parses it.** Quoting is not preserved. Escape each argument with
   `printf %q` when the remote command carries user text.
@@ -374,7 +392,7 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
 - **Anything slow in the foreground of phase A is time the box is
   unreachable.** Keep phase A minimal; defer the rest to `agent-packages.service`.
 - **`cleanup` is a wipe, not a reset.** To fix a broken box use `./run up`; to
-  replace just the server, `tf destroy -target=hcloud_server.agent`.
+  replace just the box, `tf destroy -target=oci_core_instance.agent`.
 - **Never delete the local Terraform state while resources exist.** It is the
   only pointer to live infrastructure; `cleanup.sh` verifies the server and
   volume are really gone before wiping it. (On the GCP path, the same applies to
@@ -399,11 +417,12 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
   unknown host silently but refuses a *changed* key — so a leftover `known_hosts`
   entry from a previous build reads as a VM fault. `up` and `verify` clear it for
   you (`ssh-keygen -R cloud-agent`).
-- **Tailscale SSH check mode demands a browser confirmation.** A non-interactive
-  session (verify, rekey) can trigger an "additional check" prompt —
-  once per session, not per host. Run `./run ssh` once and follow the URL; the
-  scripts warn instead of failing. `./run ssh` deliberately skips BatchMode so
-  those prompts work.
+- **Tailscale SSH check mode demands a one-time browser approval.** The first
+  SSH from a device can hit an "additional check" prompt, and the connection can
+  stall (banner never answers) instead of failing fast — so every repo SSH call
+  is bounded with a timeout. `./run up` prints the approval URL and **waits up to
+  `WAIT_APPROVAL_TIMEOUT` (default 30 min)** for you to click it, then continues
+  in the same run. `./run ssh` skips BatchMode so the prompt works interactively.
 - **x11vnc exits 2 on SIGTERM**, so a plain `systemctl stop` leaves the unit
   "Failed (exit-code)" forever — a real-looking fault on a box whose correct state
   is "stopped, login finished". `SuccessExitStatus=2` fixes new boxes and
