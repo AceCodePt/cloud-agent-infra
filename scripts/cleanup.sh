@@ -28,7 +28,7 @@ confirm() {
   [[ "$ans" == "y" || "$ans" == "Y" ]]
 }
 
-if [[ -f "$TF_DIR/backend.tf" && -d "$TF_DIR/.terraform" ]]; then
+if [[ -d "$TF_DIR/.terraform" && ( -f "$TF_DIR/backend.tf" || -f "$TF_DIR/terraform.tfstate" ) ]]; then
   echo ">> Destroying Terraform-managed resources (VM, disk, etc.)"
   if confirm "Run 'terraform destroy'? This deletes the VM and data disk."; then
     if tf destroy -auto-approve; then

@@ -19,6 +19,40 @@ catch up on, and `unattended-upgrades` ships enabled. The workload (Chromium,
 Tailscale) is distro-agnostic, so laptop parity bought nothing and a rolling
 release cost babysitting. See [history.md](history.md).
 
+## Oracle Linux 9 from OCI platform images, not a custom Arch image — **Made**
+
+On OCI's free-tier A1 (arm64), the box boots **OCI's stock Oracle Linux 9
+platform image** and provisions itself at first boot via `startup.ol.sh`. There
+is no custom image, no build/upload/import pipeline, no local QEMU boot test.
+
+The path before this: a locally built **Arch Linux ARM64 golden image**,
+imported as an OCI custom image (UEFI_64 + A1.Flex shape compat). The bring-up
+took many hours across dozens of 25–30 min cloud cycles and was still not
+finished when stopped — see
+[`../POSTMORTEM-oci-arm64-bringup.md`](../POSTMORTEM-oci-arm64-bringup.md).
+The workload is distro-agnostic (same conclusion as "Debian 12, not Arch"
+above), so the golden image bought nothing the platform image already offers.
+
+The two real needs that pulled toward Arch are both met on stock Oracle Linux:
+
+- **Latest nvim / cutting-edge tools** — the repo already installs neovim,
+  direnv and mise from GitHub releases, not the distro. That pattern is
+  distro-neutral and `startup.ol.sh` implements it.
+- **Chromium, not snap** — OCI A1 offers no platform image with real chromium
+  in base repos (Ubuntu's is a snap). `startup.ol.sh` installs **Flatpak
+  Chromium** from Flathub: standard Chromium, current, aarch64, and
+  `--socket=x11` reaches Xvfb. Flatpak works on any of the A1 images, so this
+  is a wash across candidates.
+
+Cost of the pivot: one stock platform image, zero image-pipeline machinery, and
+a change to the startup template is applied by re-running `./run up` instead of
+a 30-min build→upload→import→boot loop.
+
+Corollary: `./run up` no longer builds/imports anything. The Arch golden-image
+pipeline (build/upload/import scripts, `startup.arch.sh`, `startup.image.sh`,
+`images/` build source) was removed in the same change; the built artifacts in
+`images/output/` were kept on disk.
+
 ## Tailscale-only access, dedicated VPC, IAP as break-glass — **Made (GCP path)**
 
 *Describes the GCP design. The box now runs on Hetzner, whose equivalent is: an

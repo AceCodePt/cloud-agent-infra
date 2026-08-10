@@ -6,18 +6,15 @@ load_config
 
 VERIFY_ARGS=()
 METHOD="iap"
-NO_IMAGE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
   --quick) VERIFY_ARGS+=(--quick) ;;
-  --no-image) NO_IMAGE=true ;;
   --reboot) METHOD="reboot" ;;
   -h | --help)
-    echo "Usage: ./run up [--quick] [--no-image] [--reboot]"
-    echo "  --no-image   skip build/upload/import of the golden image (infra only)"
+    echo "Usage: ./run up [--quick] [--reboot]"
     exit 0
     ;;
-  *) die "unknown flag: $1 (try --quick, --no-image, --reboot)" ;;
+  *) die "unknown flag: $1 (try --quick, --reboot)" ;;
   esac
   shift
 done
@@ -60,36 +57,6 @@ else
   "$SCRIPT_DIR"/tailscale-api.sh check   # a key revoked mid-mint must not be baked in
 fi
 
-# --- golden image: build -> upload -> import (each step converges) ---
-if $NO_IMAGE; then
-  converged "image steps skipped (--no-image)"
-elif [[ "$PROVIDER" != oci ]]; then
-  converged "golden image steps are OCI-only (provider $PROVIDER)"
-else
-  # Snapshot the build stamp's mtime: if it changes, build-image.sh really
-  # rebuilt the image, and a local QEMU boot test gates the cloud cycle.
-  STAMP="images/output/.build-stamp"
-  [[ -f "$STAMP" ]] && STAMP_MTIME_BEFORE="$(stat -c %Y "$STAMP")" || STAMP_MTIME_BEFORE=""
-
-  step "golden image: build (skips if nothing changed)"
-  "$SCRIPT_DIR"/build-image.sh
-
-  STAMP_MTIME_AFTER=""
-  [[ -f "$STAMP" ]] && STAMP_MTIME_AFTER="$(stat -c %Y "$STAMP")"
-  if [[ -n "$STAMP_MTIME_BEFORE" && "$STAMP_MTIME_AFTER" == "$STAMP_MTIME_BEFORE" ]]; then
-    converged "image unchanged; skipping local boot test"
-  else
-    step "golden image: local QEMU boot test (fresh build)"
-    "$SCRIPT_DIR"/boot-test-local.sh
-  fi
-
-  step "golden image: upload to Object Storage (skips if object is current)"
-  "$SCRIPT_DIR"/upload-image.sh
-
-  step "golden image: import as custom image (reuses the image for this qcow2)"
-  "$SCRIPT_DIR"/import-image.sh
-fi
-
 BEFORE="$(instance_status)"
 
 if [[ "$BEFORE" == unknown ]]; then
@@ -116,16 +83,8 @@ fi
 
 case "$BEFORE" in
 absent)
-  if [[ "$PROVIDER" == oci ]]; then
-    # OCI first boot stages the whole Arch system before the box joins the
-    # tailnet (download + extract rootfs, pacman -Syu, ESP staging, reboot).
-    # Give it up to 45 minutes; every later boot is a plain Arch boot.
-    step "wait for first boot (OCI: Arch staging build, can take ~10-30 min)"
-    "$SCRIPT_DIR"/wait-ready.sh 2700
-  else
-    step "wait for first boot (the fresh VM consumes the key itself)"
-    "$SCRIPT_DIR"/wait-ready.sh
-  fi
+  step "wait for first boot (the fresh VM consumes the key itself)"
+  "$SCRIPT_DIR"/wait-ready.sh
   ;;
 TERMINATED)
   step "start $INSTANCE (a stopped VM re-runs its startup script on boot)"
@@ -136,36 +95,26 @@ RUNNING)
   if vm_online; then
     converged "$INSTANCE is online in the tailnet"
   else
-    if [[ "$PROVIDER" == oci ]]; then
-      # OCI first build is a staging host that constructs the whole Arch system
-      # on the data volume and only then reboots into it. While that runs, the
-      # box is Oracle Linux and never joins the tailnet — that is normal, not a
-      # missing key. Just wait (long): the boot-order + ESP are staged by the
-      # script itself, so there is nothing to deliver remotely.
-      step "wait for the OCI Arch staging build (download+pacman+reboot, can take ~10-30 min)"
-      "$SCRIPT_DIR"/wait-ready.sh 2700
-    else
-      step "deliver the auth key to the running VM"
-      echo "  $INSTANCE is RUNNING but not online in the tailnet, so it never"
-      echo "  consumed a key. 'apply' cannot fix this: the startup script only"
-      echo "  runs at boot, so re-trigger it explicitly."
-      if [[ "$PROVIDER" == hetzner ]]; then
-        warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
+    step "deliver the auth key to the running VM"
+    echo "  $INSTANCE is RUNNING but not online in the tailnet, so it never"
+    echo "  consumed a key. 'apply' cannot fix this: the startup script only"
+    echo "  runs at boot, so re-trigger it explicitly."
+    if [[ "$PROVIDER" == hetzner ]]; then
+      warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
   cannot be delivered remotely. Open the Hetzner Cloud web console (VNC) for
   $INSTANCE, or use a rescue system — then fix /etc/agent/authkey or reboot."
-      elif [[ "$PROVIDER" == oci ]]; then
-        warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
+    elif [[ "$PROVIDER" == oci ]]; then
+      warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
   cannot be delivered remotely. Use the OCI Cloud Shell serial console for
   $INSTANCE, then fix /etc/agent/authkey or reboot."
-      elif ! rerun_startup_script "$METHOD"; then
-        if [[ "$METHOD" == reboot ]]; then
-          die "could not stop/start $INSTANCE — see the gcloud error above."
-        fi
-        warn "re-running the startup script over IAP failed; falling back to a reboot"
-        rerun_startup_script reboot
+    elif ! rerun_startup_script "$METHOD"; then
+      if [[ "$METHOD" == reboot ]]; then
+        die "could not stop/start $INSTANCE — see the gcloud error above."
       fi
-      "$SCRIPT_DIR"/wait-ready.sh
+      warn "re-running the startup script over IAP failed; falling back to a reboot"
+      rerun_startup_script reboot
     fi
+    "$SCRIPT_DIR"/wait-ready.sh
   fi
   ;;
 *)

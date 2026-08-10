@@ -28,17 +28,6 @@ Lifecycle
                    Destroys the data disk. Use `up` unless you mean that.
   cleanup [flags]  Tear down + delete the tailnet node (--yes, --keep-bucket, --keep-files, --force)
 
-Images
-  build-image      QEMU/chroot-build the Arch ARM64 raw image -> images/output/archlinux-aarch64.img
-                   (skips the build if nothing changed)
-  upload-image     Convert the raw image to qcow2 and upload it to OCI Object
-                   Storage (bucket cloud-agent-images, object archlinux-aarch64.qcow2)
-                   (skips the upload if the object already holds this qcow2)
-  import-image     Import the uploaded qcow2 as an OCI custom image (UEFI_64, A1.Flex),
-                   then write terraform/<provider>/image.auto.tfvars so the next
-                   ./run up boots it. Idempotent: reuses the image that already
-                   imported the same qcow2. `up` runs all three automatically.
-
 Browser
   browser [url]   Reach the box's virtual display and drive the SHARED browser
                   in it, by hand, over VNC through an SSH tunnel. The browser
@@ -87,9 +76,6 @@ apply)
 wait) scripts/wait-ready.sh "$@" ;;
 verify) scripts/verify.sh "$@" ;;
 verify-browser) scripts/verify-browser.sh "$@" ;;
-build-image) scripts/build-image.sh "$@" ;;
-upload-image) scripts/upload-image.sh "$@" ;;
-import-image) scripts/import-image.sh "$@" ;;
 cleanup) scripts/cleanup.sh "$@" ;;
 
 rebuild)

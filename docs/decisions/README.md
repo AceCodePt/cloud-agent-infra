@@ -30,6 +30,7 @@ the premise is unevidenced".
 |---|---|
 | Native VM, not a container on COS | Made |
 | Debian 12 from Google's image family, not Arch | Made |
+| Oracle Linux 9 from OCI platform images, not a custom Arch image | Made |
 | Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; Hetzner uses empty-rule firewall + console/rescue) |
 | Separate persistent data disk at `/mnt/data` | Made |
 | Two-phase boot | Made |

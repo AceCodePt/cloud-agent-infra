@@ -53,7 +53,7 @@ fi
 pgrep -x Xvfb >/dev/null && echo "xvfb=yes" || echo "xvfb=no"
 swapon --noheadings --show=NAME 2>/dev/null | grep -q zram && echo "zram=yes" || echo "zram=no"
 
-if [ "$QUICK" = "false" ] && command -v chromium >/dev/null; then
+if [ "$QUICK" = "false" ] && command -v headed-chromium >/dev/null 2>&1; then
   export DISPLAY=:99 CDP_PORT=9333 BROWSER_PROFILE_DIR=/mnt/data/browser/verify
   headed-chromium about:blank >/tmp/verify-chromium.log 2>&1 </dev/null &
   CH=$!

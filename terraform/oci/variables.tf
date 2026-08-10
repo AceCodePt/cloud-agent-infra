@@ -80,9 +80,3 @@ variable "data_label" {
   default     = "cloud-agent-data"
   description = "Filesystem LABEL given to the data volume; startup discovers it by label"
 }
-
-variable "custom_image_id" {
-  description = "OCID of a pre-built OCI custom image (e.g. our Arch Linux ARM64 image). Empty => boot stock Oracle Linux and run startup.arch.sh."
-  type        = string
-  default     = ""
-}

@@ -1,49 +1,26 @@
 locals {
-  # Default: the instance boots a throwaway Oracle Linux image that stages Arch
-  # Linux on the data volume and reboots into it; startup.arch.sh does the whole
-  # build. When custom_image_id is set we boot the clean golden Arch image and
-  # provision it on the cloud at first boot via startup.image.sh — provisioning
-  # must happen on the box, never baked into the image, so user_data is never
-  # set to null.
-  use_custom_image = var.custom_image_id != ""
-  source_id        = local.use_custom_image ? var.custom_image_id : data.oci_core_images.oracle_linux.images[0].id
-  ssh_pub          = trimspace(file(pathexpand("~/.ssh/id_ed25519.pub")))
+  # The instance boots OCI's stock Oracle Linux 9 platform image and provisions
+  # itself at first boot via startup.ol.sh (rendered into user_data). Provisioning
+  # must happen on the box, never baked into an image, so user_data is never
+  # empty. startup.ol.sh installs Flatpak Chromium (not snap), the GitHub-release
+  # build of neovim/direnv/mise, and the rest of the stack in a deferred phase B.
+  source_id = data.oci_core_images.oracle_linux.images[0].id
   startup_script = replace(
     replace(
       replace(
         replace(
           replace(
-            replace(
-              file("${path.module}/../../scripts/templates/startup.arch.sh"),
-            "__DATA_DEV__", local.data_dev),
-          "__DATA_LABEL__", var.data_label),
-        "__INSTANCE__", var.instance_name),
-      "__USER__", var.ssh_user),
-    "__AUTHKEY__", var.tailscale_auth_key),
-    "__SSHPUB__", local.ssh_pub
+            file("${path.module}/../../scripts/templates/startup.ol.sh"),
+          "__DATA_DEV__", local.data_dev),
+        "__DATA_LABEL__", var.data_label),
+      "__INSTANCE__", var.instance_name),
+    "__USER__", var.ssh_user),
+    "__AUTHKEY__", var.tailscale_auth_key
   )
 
-  # Custom-image first-boot provisioning (golden Arch image). Same token
-  # substitutions as startup_script; rendered from startup.image.sh so the box
-  # provisions itself on the cloud instead of relying on baked-in config.
-  startup_custom = replace(
-    replace(
-      replace(
-        replace(
-          replace(
-            replace(
-              file("${path.module}/../../scripts/templates/startup.image.sh"),
-            "__DATA_DEV__", local.data_dev),
-          "__DATA_LABEL__", var.data_label),
-        "__INSTANCE__", var.instance_name),
-      "__USER__", var.ssh_user),
-    "__AUTHKEY__", var.tailscale_auth_key),
-    "__SSHPUB__", local.ssh_pub
-  )
-
-  # OCI paravirtualized block volumes attach as /dev/sdb (a /dev/oracleoci/
-  # udev alias also appears). startup.arch.sh probes both before declaring the
-  # disk missing.
+  # OCI paravirtualized block volumes attach as /dev/oracleoci/oraclevdb (an
+  # /dev/sdb alias also appears). startup.ol.sh waits for it before deciding the
+  # data disk is missing.
   data_dev = "/dev/oracleoci/oraclevdb"
 }
 
@@ -51,7 +28,7 @@ data "oci_identity_availability_domains" "ads" {
   compartment_id = local.compartment
 }
 
-# Oracle Linux 9.8, aarch64. Filter for the latest arm64 image; if none is
+# Oracle Linux 9, aarch64. Filter for the latest arm64 image; if none is
 # found the apply fails loudly instead of booting an x86 box.
 data "oci_core_images" "oracle_linux" {
   compartment_id           = local.compartment
@@ -97,7 +74,7 @@ resource "oci_core_instance" "agent" {
 
   metadata = {
     ssh_authorized_keys = file(pathexpand("~/.ssh/id_ed25519.pub"))
-    user_data           = base64encode(local.use_custom_image ? local.startup_custom : local.startup_script)
+    user_data           = base64encode(local.startup_script)
   }
 
   source_details {

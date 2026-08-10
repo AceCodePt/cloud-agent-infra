@@ -51,11 +51,19 @@ Asserted by `./run verify` — 18 checks, passing — and it has survived a full
 - Tailscale one-off auth keys minted via API and validated before every apply
 - Tailscale state bind-mounted onto the data volume (by `LABEL=cloud-agent-data`)
   — survives server replacement, but not volume destruction
-- Two-phase boot (`scripts/templates/startup.sh`): phase A reaches the tailnet in
-  ~1 min, phase B installs the rest out of band
+- Two-phase boot (`scripts/templates/startup.debian.sh`): phase A reaches the
+  tailnet in ~1 min, phase B installs the rest out of band
 - `./run up` — idempotent convergence, never destructive
 - Shared startup template + `PROVIDER` shim in `scripts/lib.sh`; the GCP Terraform
   path remains for reference
+
+**OCI path (free tier)**
+
+The same box on OCI's Always Free A1 boots **stock Oracle Linux 9** with
+`scripts/templates/startup.ol.sh` — no custom image, no build/upload/import
+pipeline. First boot joins the tailnet in ~1-3 min; phase B (dnf + EPEL + Flatpak
+Chromium + Xvfb + zram) finishes in the background. The Arch golden-image path was
+removed; see [`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md).
 
 **On the box** (all from phase B, so all reproducible)
 

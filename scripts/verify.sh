@@ -103,10 +103,6 @@ export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
 echo "reachable=yes"
 if mountpoint -q /mnt/data; then
   echo "data_mounted=yes"
-elif [ "$PROVIDER" = "oci" ] && [ "$(findmnt -no SOURCE / 2>/dev/null || true)" = "/dev/sdb" ]; then
-  # OCI Arch build: the data volume IS the root filesystem, so /mnt/data is a
-  # plain directory on it, not a separate mount. Accept that as mounted.
-  echo "data_mounted=yes"
 else
   echo "data_mounted=no"
 fi
