@@ -268,7 +268,7 @@ Ranked by total cost:
 ## 8. Epilogue (2026-08-10): the golden image was removed
 
 The Arch golden-image pipeline was removed in favor of OCI's **stock Oracle Linux
-9 platform image** + `startup.ol.sh` (Flatpak Chromium, GitHub-release nvim,
+9 platform image** + `startup.rhel.sh` (Flatpak Chromium, GitHub-release nvim,
 deferred phase B). The workload is distro-agnostic, so the bring-up bought nothing
 the platform image already offers, and every future change to the box was paying a
 25-30 min build→upload→import→boot cycle for the privilege. This postmortem is

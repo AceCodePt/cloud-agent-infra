@@ -29,8 +29,9 @@ the premise is unevidenced".
 | Decision | Status |
 |---|---|
 | Native VM, not a container on COS | Made |
-| Debian 12 from Google's image family, not Arch | Made |
+| Debian 12 from Google's image family, not Arch | Superseded |
 | Oracle Linux 9 from OCI platform images, not a custom Arch image | Made |
+| One RHEL-family startup template for every provider | Made |
 | Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; OCI uses no public IP + serial console, Hetzner an empty-rule firewall) |
 | Separate persistent data disk at `/mnt/data` | Made |
 | Two-phase boot | Made |

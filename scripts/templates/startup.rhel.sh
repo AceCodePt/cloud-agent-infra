@@ -369,13 +369,18 @@ echo "=== agent packages $(date -u) ==="
 
 echo ">> enabling EPEL (extra packages for enterprise linux, needed for fzf/direnv/gh/x11vnc/neovim)"
 $DNF install -y epel-release
-# Oracle ships EPEL as enabled=0: the package installs but the repo stays
-# disabled, so the EPEL-only packages (stow/gh/fzf) are invisible and wave 1
-# fails with "No match for argument". Enable it before the makecache.
-dnf config-manager --set-enabled ol9_developer_EPEL 2>/dev/null || true
-# The OCI regional yum mirror (yum.<region>.<domain>) is flaky on the free
-# tier — repomd.xml and package downloads time out. Point every Oracle repo at
-# the public mirror instead, and drop the OCI-only / ksplice repos we don't need.
+# The EPEL repo is enabled=0 in the images we boot: on Oracle Linux the
+# package installs but the repo stays disabled, on Rocky the enable line
+# targets `epel` directly — so the EPEL-only packages (stow/gh/fzf) would be
+# invisible and wave 1 fails with "No match for argument". Enable it before
+# the makecache, accepting either repo id.
+dnf config-manager --set-enabled epel 2>/dev/null ||
+  dnf config-manager --set-enabled ol9_developer_EPEL 2>/dev/null || true
+# Oracle-only mirror/repo cleanup: on Oracle Linux the OCI regional yum mirror
+# (yum.<region>.<domain>) is flaky on the free tier — repomd.xml and package
+# downloads time out. Point every Oracle repo at the public mirror instead,
+# and drop the OCI-only / ksplice repos we don't need. On Rocky these are
+# harmless no-ops (no such repo exists).
 sed -i 's|yum\$ociregion\.\$ocidomain|yum.oracle.com|g' /etc/yum.repos.d/*.repo 2>/dev/null || true
 dnf config-manager --set-disabled ol9_oci_included 2>/dev/null || true
 dnf config-manager --set-disabled ol9_ksplice 2>/dev/null || true

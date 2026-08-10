@@ -358,7 +358,7 @@ zram, fingerprint, latency, cost — are measured, not guessed, and live in
 - **In an HCL heredoc, `$$` is an escape only before `{`.** `$${VAR}` yields
   `${VAR}`, but `$$VAR` renders as two literal dollars, which bash expands to the
   **PID**. The startup now lives in plain files
-  (`scripts/templates/startup.ol.sh` / `startup.debian.sh`, read via `file()`),
+  (`scripts/templates/startup.rhel.sh`, read via `file()`),
   so this whole class is gone from new providers; the GCP path's
   `terraform/gcp/compute.tf` `lifecycle precondition` still fails the apply if
   any `$$` survives the render.

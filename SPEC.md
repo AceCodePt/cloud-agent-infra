@@ -53,12 +53,15 @@ Asserted by `./run verify` — **28 checks, passing** — and it has survived a 
 - Tailscale one-off auth keys minted via API and validated before every apply
 - Tailscale state bind-mounted onto the block volume (by `LABEL=cloud-agent-data`)
   — survives instance replacement, but not volume destruction
-- Two-phase boot (`scripts/templates/startup.ol.sh`): phase A reaches the tailnet
-  in ~3-4 min, phase B (dnf + EPEL + Flatpak Chromium + zram + dnf-automatic)
-  installs the rest out of band
+- Two-phase boot (`scripts/templates/startup.rhel.sh`): phase A reaches the
+  tailnet in ~3-4 min, phase B (dnf + EPEL + Flatpak Chromium + zram +
+  dnf-automatic) installs the rest out of band
 - `./run up` — idempotent convergence, never destructive
-- Shared startup templates + `PROVIDER` shim in `scripts/lib.sh`; the Hetzner
-  (Debian 12) and GCP Terraform paths remain for reference
+- One RHEL-family startup template for every provider: OCI boots its stock
+  Oracle Linux 9, the Hetzner and GCP Terraform paths boot Rocky Linux 9 — the
+  setup process after picking the image is identical. `PROVIDER` shim in
+  `scripts/lib.sh`; the Hetzner and GCP paths remain for reference (GCP still
+  on Debian; see `TASK.md`)
 
 **On the box** (all from phase B, so all reproducible)
 

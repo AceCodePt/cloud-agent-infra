@@ -12,18 +12,47 @@ read-only `/mnt`, a Tailscale sidecar fighting the app container, host/container
 port-22 collisions, and Tailscale SSH hanging on a bare container. One machine,
 one sshd path, one `tailscaled`. See [history.md](history.md).
 
-## Debian 12 from Google's image family, not Arch — **Made**
+## Debian 12 from Google's image family, not Arch — **Superseded**
 
 `debian-cloud/debian-12` is rebuilt constantly, so first boot has nothing to
 catch up on, and `unattended-upgrades` ships enabled. The workload (Chromium,
 Tailscale) is distro-agnostic, so laptop parity bought nothing and a rolling
 release cost babysitting. See [history.md](history.md).
 
+**Superseded 2026-08-10** by the single-RHEL-family rule below: the Debian
+template (`startup.debian.sh`) was removed and every provider now runs the one
+dnf-based `startup.rhel.sh`. The load-bearing principle survived intact — the
+workload is distro-agnostic — which is exactly why one family could replace two
+distros. The GCP path is still on Debian as a reference; migrating it to Rocky
+Linux 9 is an open task (see `TASK.md`).
+
+## One RHEL-family startup template for every provider — **Made**
+
+OCI boots its stock Oracle Linux 9 platform image; every other provider
+(Hetzner today, GCP pending) boots **Rocky Linux 9**. Both are RHEL-derived, so
+**one** dnf-based startup template — `startup.rhel.sh` — is the setup process
+everywhere: after the per-provider step of picking the image, provisioning is
+byte-for-byte identical. Only the base-image reference in each provider's
+terraform differs.
+
+The two template edits that made the OL9 script family-neutral:
+
+- EPEL enable accepts either repo id (`epel` on Rocky, `ol9_developer_EPEL` on
+  Oracle Linux).
+- The OCI-only mirror `sed` and `ol9_oci_included`/`ol9_ksplice` repo-disables
+  are guarded by `|| true` and match repos that do not exist on Rocky, so they
+  are harmless no-ops there while still fixing OCI's flaky regional mirrors.
+
+`startup.debian.sh` was removed; the GCP path's move from Debian to Rocky is an
+open task. The live OCI box is untouched (unchanged image + `ignore_changes`),
+so the template change applies on the next rebuild, not a migration.
+
 ## Oracle Linux 9 from OCI platform images, not a custom Arch image — **Made**
 
 On OCI's free-tier A1 (arm64), the box boots **OCI's stock Oracle Linux 9
-platform image** and provisions itself at first boot via `startup.ol.sh`. There
-is no custom image, no build/upload/import pipeline, no local QEMU boot test.
+platform image** and provisions itself at first boot via `startup.rhel.sh`.
+There is no custom image, no build/upload/import pipeline, no local QEMU boot
+test.
 
 The path before this: a locally built **Arch Linux ARM64 golden image**,
 imported as an OCI custom image (UEFI_64 + A1.Flex shape compat). The bring-up
@@ -37,9 +66,9 @@ The two real needs that pulled toward Arch are both met on stock Oracle Linux:
 
 - **Latest nvim / cutting-edge tools** — the repo already installs neovim,
   direnv and mise from GitHub releases, not the distro. That pattern is
-  distro-neutral and `startup.ol.sh` implements it.
+  distro-neutral and `startup.rhel.sh` implements it.
 - **Chromium, not snap** — OCI A1 offers no platform image with real chromium
-  in base repos (Ubuntu's is a snap). `startup.ol.sh` installs **Flatpak
+  in base repos (Ubuntu's is a snap). `startup.rhel.sh` installs **Flatpak
   Chromium** from Flathub: standard Chromium, current, aarch64, and
   `--socket=x11` reaches Xvfb. Flatpak works on any of the A1 images, so this
   is a wash across candidates.
@@ -203,6 +232,17 @@ On 2026-08-10 the active box moved again, to OCI's **Always Free A1** (2 OCPU /
 12 GB, `il-jerusalem-1`, stock Oracle Linux 9) — see the "Oracle Linux 9 from
 OCI platform images" decision above. The Hetzner path stays as the paid
 fallback. The rest of this section is the record of the GCP → Hetzner move.
+
+**IPv6 for a direct Tailscale path (2026-08-10):** the box got an
+Oracle-allocated /56 GUA prefix (`is_ipv6enabled` on the VCN) and a public IPv6
+on its VNIC, plus an internet gateway with a `::/0` route. This lets Tailscale
+establish a **direct, non-DERP** connection from any IPv6-capable network (the
+phone on 5G goes direct; the laptop needs IPv6, e.g. tethered to the phone).
+Posture change: the security list's only ingress is now **IPv6 UDP 41641**
+(Tailscale/WireGuard) from `::/0`; IPv4 still has zero public ingress and no
+public IPv4. Verified by `verify.sh` (28 checks) and by
+`tailscale ping` showing `direct [2a02:…]` to the phone vs DERP before.
+
 
 What unblocked it:
 

@@ -1,16 +1,19 @@
 locals {
   # The instance boots OCI's stock Oracle Linux 9 platform image and provisions
-  # itself at first boot via startup.ol.sh (rendered into user_data). Provisioning
-  # must happen on the box, never baked into an image, so user_data is never
-  # empty. startup.ol.sh installs Flatpak Chromium (not snap), the GitHub-release
-  # build of neovim/direnv/mise, and the rest of the stack in a deferred phase B.
+  # itself at first boot via startup.rhel.sh (rendered into user_data) — the
+  # single RHEL-family template shared by every provider (OCI boots Oracle
+  # Linux, others boot Rocky Linux 9; the setup process after image selection
+  # is identical). Provisioning must happen on the box, never baked into an
+  # image, so user_data is never empty. startup.rhel.sh installs Flatpak
+  # Chromium (not snap), the GitHub-release build of neovim/direnv/mise, and
+  # the rest of the stack in a deferred phase B.
   source_id = data.oci_core_images.oracle_linux.images[0].id
   startup_script = replace(
     replace(
       replace(
         replace(
           replace(
-            file("${path.module}/../../scripts/templates/startup.ol.sh"),
+            file("${path.module}/../../scripts/templates/startup.rhel.sh"),
           "__DATA_DEV__", local.data_dev),
         "__DATA_LABEL__", var.data_label),
       "__INSTANCE__", var.instance_name),
@@ -19,8 +22,8 @@ locals {
   )
 
   # OCI paravirtualized block volumes attach as /dev/oracleoci/oraclevdb (an
-  # /dev/sdb alias also appears). startup.ol.sh waits for it before deciding the
-  # data disk is missing.
+  # /dev/sdb alias also appears). startup.rhel.sh waits for it before deciding
+  # the data disk is missing.
   data_dev = "/dev/oracleoci/oraclevdb"
 }
 

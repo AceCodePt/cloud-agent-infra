@@ -91,7 +91,7 @@ cloud-agent-infra/
 │
 ├── scripts/              # everything `./run` dispatches; mapped in docs/capabilities.md
 │   ├── lib.sh            # shared: repo-root resolution, config, PROVIDER shim, ssh helpers
-│   ├── templates/        # 2-phase startup per distro: startup.debian.sh, startup.ol.sh
+│   ├── templates/        # 2-phase startup, one RHEL-family template for all providers: startup.rhel.sh
 │   ├── up.sh             # THE command: converge everything to verified, non-destructively
 │   ├── bootstrap.sh      # terraform init + mint auth key (GCP path: also GCS backend)
 │   ├── cleanup.sh        # tear down compute + state + local files + tailnet node
