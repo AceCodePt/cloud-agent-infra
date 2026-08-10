@@ -48,7 +48,8 @@ Asserted by `./run verify` — **28 checks, passing** — and it has survived a 
   **stock Oracle Linux 9** platform image — no custom image, no build/upload/
   import pipeline (the Arch golden-image path was removed; see
   [`docs/decisions/infrastructure.md`](docs/decisions/infrastructure.md))
-- Zero public ingress: no public IP + a security list with no ingress rules;
+- Zero public ingress: no public IPv4 + a security list whose only ingress is
+  IPv6 UDP 41641 (Tailscale's WireGuard port, for the direct non-DERP path);
   Tailscale-only access, with the OCI serial console (Cloud Shell) as break-glass
 - Tailscale one-off auth keys minted via API and validated before every apply
 - Tailscale state bind-mounted onto the block volume (by `LABEL=cloud-agent-data`)

@@ -61,6 +61,41 @@ load_config() {
 
   # One Terraform root module per provider: terraform/<provider>/.
   TF_DIR="$PROVIDER_DIR/$PROVIDER"
+
+  # Persist Terraform providers in a shared cache so they survive cleanup.sh
+  # deleting terraform/<provider>/.terraform — otherwise every rebuild
+  # re-downloads the provider and prints "Installing oracle/oci ...".
+  export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-$HOME/.terraform.d/plugin-cache}"
+  mkdir -p "$TF_PLUGIN_CACHE_DIR"
+}
+
+tf() { terraform -chdir="$TF_DIR" "$@"; }
+
+# registry.terraform.io source of the provider the active PROVIDER uses.
+provider_source() {
+  case "$PROVIDER" in
+  oci) echo "registry.terraform.io/oracle/oci" ;;
+  hetzner) echo "registry.terraform.io/hetznercloud/hcloud" ;;
+  gcp) echo "registry.terraform.io/hashicorp/google" ;;
+  esac
+}
+
+# True when the active provider's plugin is already on disk — either extracted
+# in the root module's .terraform/providers or present in the shared cache.
+provider_installed() {
+  local src
+  src="$(provider_source)"
+  [[ -d "$TF_DIR/.terraform/providers/$src" ]] && return 0
+  [[ -d "$TF_PLUGIN_CACHE_DIR/$src" ]] && return 0
+  return 1
+}
+
+# True when the root module is already initialized AND the provider is on disk.
+# Only then is `terraform init` truly redundant — a wiped .terraform still needs
+# init to recreate it, even if the provider is cached (init then reuses the
+# cache instead of re-downloading).
+provider_init_unneeded() {
+  provider_installed && [[ -d "$TF_DIR/.terraform" ]]
 }
 
 tf() { terraform -chdir="$TF_DIR" "$@"; }
@@ -284,9 +319,11 @@ for v in d.get("data", []):
   printf '%s' "${live# }"
 }
 
-# Asserts the repo's "no public inbound" posture on OCI: the instance must have
-# NO public IP and the subnet security list must have NO ingress rules. Prints
-# exactly 'none' when the posture holds; anything else fails the assertion.
+# Asserts the repo's inbound posture on OCI: the instance must have NO public
+# IPv4 and the subnet security list must have NO IPv4 ingress; the ONLY allowed
+# ingress is IPv6 UDP 41641 (Tailscale's WireGuard port, for the direct path).
+# Prints exactly 'none' when the posture holds; anything else fails the
+# assertion.
 oci_public_ingress() {
   local id subnet sl
   id="$(oci_find_instance)"
@@ -306,7 +343,7 @@ for v in d.get("data", []):
 sys.exit(0)
 ' 2>/dev/null)"
   if [[ -n "$pub" ]]; then
-    printf 'instance has a public IP (%s)' "$pub"
+    printf 'instance has a public IPv4 (%s)' "$pub"
     return 0
   fi
 
@@ -336,6 +373,8 @@ for s in sls:
 ' 2>/dev/null | head -1)"
   [[ -n "$sl" ]] || { printf 'could not read security list'; return 0; }
 
+  # Allowed ingress exactly: IPv6 UDP 41641 from ::/0 (Tailscale WireGuard).
+  # Anything else — any IPv4 ingress, any other port/protocol/prefix — is drift.
   oci network security-list get --security-list-id "$sl" 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -343,8 +382,17 @@ try:
 except Exception:
     sys.exit(0)
 rules = d.get("data", {}).get("ingress-security-rules", [])
-print("open ingress rule" if rules else "none")
-'
+for r in rules:
+    src = r.get("source", "")
+    proto = r.get("protocol", "")
+    udp = (r.get("udp-options") or {}).get("destination-port-range") or {}
+    lo, hi = udp.get("min", None), udp.get("max", None)
+    if src == "::/0" and proto == "17" and (lo, hi) == (41641, 41641):
+        continue
+    print("unexpected ingress rule: source=%s protocol=%s udp=%s-%s" % (src, proto, lo, hi))
+    sys.exit(0)
+print("none")
+' 2>/dev/null
 }
 
 # --- provider dispatch ---

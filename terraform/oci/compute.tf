@@ -92,3 +92,20 @@ resource "oci_core_instance" "agent" {
     ignore_changes = [metadata, source_details]
   }
 }
+
+# The instance's primary VNIC, so we can attach a public IPv6 (Tailscale direct
+# path). The VNIC is created implicitly by the instance resource, so it is
+# looked up by attachment instead of declared directly.
+data "oci_core_vnic_attachments" "agent" {
+  compartment_id = local.compartment
+  instance_id    = oci_core_instance.agent.id
+}
+
+resource "oci_core_ipv6" "agent" {
+  # Oracle assigns the address from the subnet's IPv6 /64. "RESERVED" keeps the
+  # address stable across a stop/start (an ephemeral one can change on reboot).
+  vnic_id      = data.oci_core_vnic_attachments.agent.vnic_attachments[0].vnic_id
+  subnet_id    = oci_core_subnet.agent.id
+  lifetime     = "RESERVED"
+  display_name = "${var.instance_name}-ipv6"
+}

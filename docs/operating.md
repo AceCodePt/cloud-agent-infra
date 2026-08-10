@@ -89,6 +89,9 @@ exactly one definition. Full reasoning:
 - `terraform` and the `oci` CLI installed locally. (The `PROVIDER=hetzner` path
   needs a Hetzner API token instead; `PROVIDER=gcp` needs `gcloud` and
   application-default credentials — see `example.config.env`.)
+- The Terraform provider (`oracle/oci` etc.) is downloaded once into
+  `~/.terraform.d/plugin-cache` (`TF_PLUGIN_CACHE_DIR`, set in `lib.sh`) and
+  reused from there, so `cleanup`/`rebuild` never re-download it.
 
 ---
 
@@ -281,18 +284,24 @@ there.)
 
 ---
 
-## Security: no public inbound
+## Security: no public inbound (IPv4); one IPv6 Tailscale port
 
-The instance has **no public IP** (the VNIC is created with
-`assign_public_ip = false`) and its subnet's **security list has no ingress
-rules** — only egress. Tailscale dials out; nothing else can reach the box.
-`verify.sh` asserts both (no public IP, no inbound rule).
+The instance has **no public IPv4** (the VNIC is created with
+`assign_public_ip = false`); IPv4 stays behind a NAT gateway with an empty
+ingress rule set. The **only** public ingress in the security list is
+**IPv6 UDP 41641** — Tailscale's WireGuard listener — which lets the box take a
+direct (non-DERP) Tailscale path from any IPv6-capable network. WireGuard does
+not respond to unauthenticated handshakes, so nothing else is exposed; the
+firewalld on the box opens the same single port. `verify.sh` asserts all of
+this: no public IPv4, and the security list's only ingress rule is IPv6
+UDP 41641 from `::/0`.
 
-There is **no public inbound** — you reach the box over the Tailscale tailnet,
-established outbound. Your user has **passwordless sudo**, acceptable because the
-only way in is your tailnet identity, enforced off-box (`useradd` creates the
-account password-locked, and sshd has `PasswordAuthentication no` +
-`PermitRootLogin no`, so no password would ever match).
+There is **no other public inbound** — you reach the box over the Tailscale
+tailnet, established outbound. Your user has **passwordless sudo**, acceptable
+because the only way in is your tailnet identity, enforced off-box
+(`useradd` creates the account password-locked, and sshd has
+`PasswordAuthentication no` + `PermitRootLogin no`, so no password would ever
+match). SSH is never opened publicly — the security list keeps TCP 22 closed.
 
 Break-glass when Tailscale is the thing that is broken: the OCI **serial console**
 via Cloud Shell. The tty login is unusable by design — the account password

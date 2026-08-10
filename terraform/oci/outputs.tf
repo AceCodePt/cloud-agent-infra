@@ -17,3 +17,8 @@ output "availability_domain" {
   description = "Availability domain the instance was placed in"
   value       = oci_core_instance.agent.availability_domain
 }
+
+output "ipv6_address" {
+  description = "Public IPv6 of the agent VNIC (Tailscale direct path)"
+  value       = oci_core_ipv6.agent.ip_address
+}

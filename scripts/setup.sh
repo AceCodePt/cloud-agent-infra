@@ -51,7 +51,8 @@ oci_section() {
     miss "OCI_PRIVATE_KEY_PATH" "path to the API private key PEM (~/.oci/oci_api_key.pem)"
   fi
   if [[ -n "${TF_VAR_region:-}" ]]; then ok "TF_VAR_region" "$TF_VAR_region (home region hosts Always Free capacity)"; else miss "TF_VAR_region" "region"; fi
-  line "  Security posture: private subnet (NO public IP) + NAT for outbound only;"
+  line "  Security posture: private subnet (NO public IPv4) + NAT for outbound only;"
+  line "  public ingress is exactly IPv6 UDP 41641 (Tailscale direct path)."
   line "  SSH only via Tailscale; data on a labeled block volume at /mnt/data."
   line "  Free tier: VM.Standard.A1.Flex, up to 4 OCPU / 24 GB / 200 GB block."
 }
