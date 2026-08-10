@@ -21,12 +21,23 @@ note "Waiting for $INSTANCE to be ready (timeout ${TIMEOUT}s)"
 joined=false
 complete=false
 packages_done=false
+ssh_check_notified=false
 $WAIT_PACKAGES && note "will also wait for the deferred package install (phase B)"
 
 while :; do
   elapsed=$(($(date +%s) - START))
-  if [[ "$elapsed" -gt "$TIMEOUT" ]]; then
+  # A pending Tailscale SSH approval means the wait is on the human, not the
+  # box: extend the budget so a slow click doesn't kill the run mid-provision.
+  effective_timeout="$TIMEOUT"
+  if $ssh_check_notified; then
+    effective_timeout=$((TIMEOUT + ${WAIT_APPROVAL_TIMEOUT:-1800}))
+  fi
+  if [[ "$elapsed" -gt "$effective_timeout" ]]; then
     echo >&2
+    if $ssh_check_notified; then
+      die "timed out waiting for the Tailscale SSH approval (${WAIT_APPROVAL_TIMEOUT:-1800}s).
+  Approve the URL printed above, then re-run: ./run up"
+    fi
     if [[ "$PROVIDER" == hetzner ]]; then
       die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
   Inspect the boot with the Hetzner Cloud web console (VNC) for $INSTANCE, or
@@ -70,6 +81,22 @@ while :; do
     elif grep -q 'agent startup complete' <<<"$SERIAL"; then
       complete=true
       note "startup script completed (${elapsed}s, serial console)"
+    fi
+  fi
+
+  # Tailscale SSH "check mode": the first connection from this machine needs a
+  # one-time browser approval. Surface the URL once (not every poll) so the user
+  # can approve mid-run; the next poll then succeeds and this run continues.
+  if ! $complete && ! $ssh_check_notified && $joined; then
+    PROBE="$(ssh_vm true 2>&1 || true)"
+    if grep -qE "additional check|login.tailscale.com" <<<"$PROBE"; then
+      ssh_check_notified=true
+      CHECK_URL="$(grep -oE 'https://login\.tailscale\.com/a/[A-Za-z0-9]+' <<<"$PROBE" | head -1)"
+      echo
+      warn "Tailscale SSH needs a one-time browser approval before SSH to $INSTANCE works."
+      echo "  Open this URL in a browser and approve it — this run continues automatically:"
+      echo "    ${CHECK_URL:-<no URL found — run interactively:  ./run ssh>}"
+      echo
     fi
   fi
 

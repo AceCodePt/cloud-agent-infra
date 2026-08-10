@@ -53,7 +53,15 @@ fi
 # --- persistent data disk, discovered by filesystem LABEL (provider-neutral) ---
 mkdir -p "$DATA_MNT"
 # OCI block volumes attach over iSCSI; the device may take a moment to appear.
-# Wait a bounded time for __DATA_DEV__ before declaring the disk missing.
+# The udev alias __DATA_DEV__ is not deterministic (this instance got
+# oraclevda, others oraclevdb), so scan the /dev/oracleoci/ symlinks for a
+# non-partition device and fall back to the well-known plain names too.
+for cand in "$DATA_DEV" \
+            "$(for s in /dev/oracleoci/oraclevd*; do [[ "$s" =~ [0-9]$ ]] || echo "$s"; done | head -1)" \
+            /dev/sdb /dev/vdb; do
+  [ -n "$cand" ] && [ -b "$cand" ] && DATA_DEV="$cand" && break
+done
+# Wait a bounded time for the data device before declaring the disk missing.
 for _ in $(seq 1 30); do
   [ -b "$DATA_DEV" ] && break
   sleep 2
@@ -351,6 +359,10 @@ echo "=== agent packages $(date -u) ==="
 
 echo ">> enabling EPEL (extra packages for enterprise linux, needed for fzf/direnv/gh/x11vnc/neovim)"
 $DNF install -y epel-release
+# Oracle ships EPEL as enabled=0: the package installs but the repo stays
+# disabled, so the EPEL-only packages (stow/gh/fzf) are invisible and wave 1
+# fails with "No match for argument". Enable it before the makecache.
+dnf config-manager --set-enabled ol9_developer_EPEL 2>/dev/null || true
 # The OCI regional yum mirror (yum.<region>.<domain>) is flaky on the free
 # tier — repomd.xml and package downloads time out. Point every Oracle repo at
 # the public mirror instead, and drop the OCI-only / ksplice repos we don't need.
@@ -430,8 +442,9 @@ if ! command -v mise >/dev/null 2>&1; then
   MISE_TARBALL="$(mktemp)"
   if curl -fsSL "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-${NVIM_ARCH}.tar.gz" \
       -o "$MISE_TARBALL"; then
-    mkdir -p /opt/mise
-    tar -xzf "$MISE_TARBALL" -C /opt/mise
+    # The tarball carries a top-level `mise/` dir, so extract to /opt (like
+    # neovim) or /opt/mise/bin/mise never exists and the symlink dangles.
+    tar -xzf "$MISE_TARBALL" -C /opt
     ln -sf /opt/mise/bin/mise /usr/local/bin/mise
   else
     echo "!! could not download mise from GitHub releases"
@@ -458,7 +471,7 @@ echo ">> wave 2: upgrade + headed-browser stack"
 dnf -y --allowerasing upgrade
 $DNF install -y flatpak xorg-x11-server-Xvfb xauth \
   liberation-fonts google-noto-sans-fonts \
-  x11vnc python3-virtualenv mesa-libGL
+  x11vnc mesa-libGL
 $DNF install -y neovim 2>/dev/null || true
 
 echo ">> flatpak: add Flathub and install standard Chromium (aarch64)"
@@ -468,7 +481,9 @@ flatpak install -y flathub org.chromium.Chromium
 flatpak override --user --filesystem=/mnt/data org.chromium.Chromium
 
 echo ">> zram: compressed swap via systemd zram-generator"
-$DNF install -y systemd-zram-generator
+# Package name is `zram-generator` on EL9 (Fedora's `systemd-zram-generator`
+# does not exist here).
+$DNF install -y zram-generator
 cat > /etc/systemd/zram-generator.conf <<'ZRAM'
 [zram0]
 zram-size = min(ram / 2, 4096)

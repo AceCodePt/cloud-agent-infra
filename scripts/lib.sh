@@ -67,7 +67,13 @@ tf() { terraform -chdir="$TF_DIR" "$@"; }
 
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
-ssh_vm() { ssh "${SSH_OPTS[@]}" "$SSH_USER@$INSTANCE" "$@"; }
+# Bounded SSH: a stalled peer (e.g. a Tailscale SSH check-mode banner that never
+# answers) would otherwise hang every orchestration script forever —
+# ConnectTimeout cannot catch it because the TCP handshake over the WireGuard
+# tunnel always succeeds. `timeout` bounds the whole session.
+SSH_TIMEOUT="${SSH_TIMEOUT:-20}"
+
+ssh_vm() { timeout "$SSH_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SSH_USER@$INSTANCE" "$@"; }
 
 vm_online() {
   command -v tailscale >/dev/null 2>&1 || return 1

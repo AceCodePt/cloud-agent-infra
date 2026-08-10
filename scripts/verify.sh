@@ -146,7 +146,9 @@ if [[ "$(fact "$VM_FACTS" reachable)" != "yes" ]]; then
   *"REMOTE HOST IDENTIFICATION HAS CHANGED"*)
     bad "stale host key for $INSTANCE (the VM was rebuilt). Fix: ssh-keygen -R $INSTANCE" ;;
   *"additional check"* | *"login.tailscale.com"*)
-    bad "Tailscale SSH check mode wants a browser confirmation. Run: ssh $SSH_USER@$INSTANCE" ;;
+    CHECK_URL="$(grep -oE 'https://login\.tailscale\.com/a/[A-Za-z0-9]+' <<<"$SSH_ERR" | head -1)"
+    bad "Tailscale SSH wants a one-time browser approval before SSH works.
+  Open: ${CHECK_URL:-<no URL found — run: ./run ssh>}  then re-run:  ./run verify" ;;
   *)
     bad "cannot SSH to $SSH_USER@$INSTANCE: ${SSH_ERR:-unknown error}" ;;
   esac
@@ -156,7 +158,12 @@ else
   assert "/mnt/data/browser owned by $SSH_USER" "$(fact "$VM_FACTS" browser_owner)" "$SSH_USER"
   assert "headed-chromium passes arguments through" "$(fact "$VM_FACTS" chromium_args)" "ok"
   assert "no '\$\$' in the generated wrapper" "$(fact "$VM_FACTS" dollar_bug)" "absent"
-  assert "$SSH_USER password is locked" "$(fact "$VM_FACTS" passwd_state)" "L"
+  # passwd -S reports 'L' (Debian) or 'LK' (EL9) for a locked account.
+  if [[ "$(fact "$VM_FACTS" passwd_state)" == L* ]]; then
+    ok "$SSH_USER password is locked"
+  else
+    bad "$SSH_USER password is locked (got '$(fact "$VM_FACTS" passwd_state)', want 'L' or 'LK')"
+  fi
   assert "sshd PasswordAuthentication off" "$(fact "$VM_FACTS" sshd_passauth)" "off"
   assert "sshd PermitRootLogin off" "$(fact "$VM_FACTS" sshd_rootlogin)" "off"
   assert "sshd KbdInteractiveAuthentication off" "$(fact "$VM_FACTS" sshd_kbdinteractive)" "off"
