@@ -89,6 +89,9 @@ EOF
     else
       tf init -input=false
     fi
+  elif provider_init_unneeded; then
+    echo ">> Hetzner: LOCAL Terraform state in $TF_DIR (git-ignored)."
+    echo "   Provider $(provider_source) already installed — skipping terraform init."
   else
     echo ">> Hetzner: LOCAL Terraform state in $TF_DIR (git-ignored)."
     echo "   For a durable backend, create a bucket in the Hetzner console"
@@ -105,7 +108,11 @@ if [[ "$PROVIDER" == oci ]]; then
   echo ">> OCI: LOCAL Terraform state in $TF_DIR (git-ignored)."
   echo "   For a durable backend, use OCI Object Storage (terraform backend s3"
   echo "   with an S3-compatible endpoint) and add the keys to config.env."
-  tf init -input=false
+  if provider_init_unneeded; then
+    echo ">> Provider $(provider_source) already installed — skipping terraform init."
+  else
+    tf init -input=false
+  fi
   echo ">> Bootstrap complete. Next: ./run plan && ./run apply"
   exit 0
 fi
