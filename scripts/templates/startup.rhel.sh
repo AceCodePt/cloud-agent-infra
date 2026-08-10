@@ -173,6 +173,14 @@ if sshd -t 2>/dev/null; then
 else
   echo "!! sshd -t failed; NOT restarting sshd (check sshd_config.d)"
 fi
+if command -v firewall-cmd >/dev/null 2>&1; then
+  systemctl enable --now firewalld >/dev/null 2>&1 || true
+  if ! firewall-cmd --list-ports --permanent 2>/dev/null | grep -q '^41641/udp$'; then
+    firewall-cmd --permanent --add-port=41641/udp >/dev/null 2>&1 || true
+  fi
+  firewall-cmd --reload >/dev/null 2>&1 || true
+fi
+
 systemctl enable --now tailscaled
 
 # --- join the tailnet ---
