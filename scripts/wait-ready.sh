@@ -22,6 +22,9 @@ joined=false
 complete=false
 packages_done=false
 ssh_check_notified=false
+hostkey_cleared=false
+approval_last_hint=0
+last_probe_issue=""
 $WAIT_PACKAGES && note "will also wait for the deferred package install (phase B)"
 
 while :; do
@@ -40,18 +43,21 @@ while :; do
     fi
     if [[ "$PROVIDER" == hetzner ]]; then
       die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+  last probe issue: ${last_probe_issue:-none}
   Inspect the boot with the Hetzner Cloud web console (VNC) for $INSTANCE, or
   connect its rescue system. A server that boots but never joins the tailnet
   usually means the auth key was spent, revoked, expired, or missing (there is
   no public inbound, so it just looks dead). Recover with: ./run rekey"
     elif [[ "$PROVIDER" == oci ]]; then
       die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+  last probe issue: ${last_probe_issue:-none}
   Inspect the boot with the OCI console serial connection for $INSTANCE. A VM
   that boots but never joins the tailnet usually means the auth key was spent,
   revoked, expired, or missing (there is no public inbound, so it just looks
   dead). Recover with: ./run rekey"
     else
       die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+  last probe issue: ${last_probe_issue:-none}
   Inspect the boot with:
     gcloud compute instances get-serial-port-output $INSTANCE --zone $ZONE | tail -40
   A VM that boots but never joins the tailnet usually means the auth key was
@@ -75,28 +81,58 @@ while :; do
   fi
 
   if ! $complete; then
-    if $joined && ssh_vm test -f /run/agent-startup-complete 2>/dev/null; then
-      complete=true
-      note "startup script completed (${elapsed}s, sentinel file)"
-    elif grep -q 'agent startup complete' <<<"$SERIAL"; then
+    if $joined; then
+      PROBE_OUT="$(ssh_vm test -f /run/agent-startup-complete 2>&1)"
+      PROBE_RC=$?
+      if [[ "$PROBE_RC" -eq 0 ]]; then
+        complete=true
+        note "startup script completed (${elapsed}s, sentinel file)"
+      else
+        if [[ "$PROBE_RC" -eq 124 ]]; then
+          last_probe_issue="SSH probe is stalling (no answer in ${SSH_TIMEOUT:-20}s) — check-mode approval pending, or SELinux is blocking Tailscale SSH"
+        elif grep -q "REMOTE HOST IDENTIFICATION HAS CHANGED" <<<"$PROBE_OUT"; then
+          last_probe_issue="host key changed (the VM was recreated)"
+          if ! $hostkey_cleared; then
+            hostkey_cleared=true
+            warn "host key for $INSTANCE changed (VM was recreated) — clearing known_hosts and retrying"
+            ssh-keygen -R "$INSTANCE" >/dev/null 2>&1 || true
+          fi
+        elif grep -qiE "could not resolve hostname|Name or service not known" <<<"$PROBE_OUT"; then
+          last_probe_issue="'$INSTANCE' does not resolve on the tailnet (MagicDNS) — is this machine's tailnet session logged in?"
+        else
+          last_probe_issue="SSH probe failed: $(head -1 <<<"$PROBE_OUT")"
+        fi
+        if (( elapsed % 60 < 10 )); then
+          warn "not complete yet (${elapsed}s) — $last_probe_issue"
+        fi
+      fi
+    fi
+    if ! $complete && grep -q 'agent startup complete' <<<"$SERIAL"; then
       complete=true
       note "startup script completed (${elapsed}s, serial console)"
     fi
   fi
 
   # Tailscale SSH "check mode": the first connection from this machine needs a
-  # one-time browser approval. Surface the URL once (not every poll) so the user
-  # can approve mid-run; the next poll then succeeds and this run continues.
-  if ! $complete && ! $ssh_check_notified && $joined; then
+  # one-time browser approval. Surface the URL when it appears, then keep a
+  # compact reminder visible every ~60s so a not-watching human cannot miss it.
+  if ! $complete && $joined; then
     PROBE="$(ssh_vm true 2>&1 || true)"
     if grep -qE "additional check|login.tailscale.com" <<<"$PROBE"; then
-      ssh_check_notified=true
       CHECK_URL="$(grep -oE 'https://login\.tailscale\.com/a/[A-Za-z0-9]+' <<<"$PROBE" | head -1)"
-      echo
-      warn "Tailscale SSH needs a one-time browser approval before SSH to $INSTANCE works."
-      echo "  Open this URL in a browser and approve it — this run continues automatically:"
-      echo "    ${CHECK_URL:-<no URL found — run interactively:  ./run ssh>}"
-      echo
+      if ! $ssh_check_notified; then
+        ssh_check_notified=true
+        approval_last_hint="$elapsed"
+        echo
+        warn "Tailscale SSH needs a one-time browser approval before SSH to $INSTANCE works."
+        echo "  Open this URL in a browser and approve it — this run continues automatically:"
+        echo "    ${CHECK_URL:-<no URL found — run interactively:  ./run ssh>}"
+        echo
+      elif [[ -n "$CHECK_URL" ]] && (( elapsed - approval_last_hint >= 60 )); then
+        approval_last_hint="$elapsed"
+        warn "still waiting for the SSH approval — open this URL to continue:"
+        echo "    $CHECK_URL"
+      fi
     fi
   fi
 

@@ -150,23 +150,30 @@ PY
 }
 
 cmd_check() {
-  local key id
+  local key id source
   key="$(effective_auth_key)"
 
-  [[ -n "$key" ]] || die "no Tailscale auth key to check.
-  Neither $KEYFILE nor TF_VAR_tailscale_auth_key holds one.
-  Fix: ./run mint-key"
-
-  [[ "$key" == tskey-auth-* ]] || die "the auth key does not look like one
-  (expected it to start with 'tskey-auth-', got '${key:0:12}...')."
-
-  if [[ -z "$API_KEY" ]]; then
-    warn "TAILSCALE_API_KEY is not set, so the auth key cannot be validated.
-  Proceeding blind: if it is spent or expired the VM will boot and never join."
-    return 0
+  if [[ -z "$key" ]]; then
+    note "no Tailscale auth key is present — that is the default state.
+  Neither $KEYFILE nor TF_VAR_tailscale_auth_key holds one, so there is nothing
+  to check yet. One is only needed when a VM must join the tailnet:
+    ./run mint-key"
+    exit 2
   fi
 
+  if [[ -f "$KEYFILE" ]]; then source="$KEYFILE"; else source="TF_VAR_tailscale_auth_key in config.env"; fi
+
+  [[ "$key" == tskey-auth-* ]] || die "the auth key does not look like one
+  (expected it to start with 'tskey-auth-', got '${key:0:12}...') from $source."
+
   id="$(printf '%s' "$key" | cut -d- -f3)"
+
+  if [[ -z "$API_KEY" ]]; then
+    warn "using Tailscale auth key $id from $source, but TAILSCALE_API_KEY is not
+  set, so it cannot be validated. Proceeding blind: if it is spent or expired
+  the VM will boot and never join."
+    return 0
+  fi
 
   local out code body
   out="$(curl -s -w '\n%{http_code}' -u "$API_KEY:" "$API/tailnet/-/keys/$id")" ||
@@ -188,38 +195,37 @@ else:
     ;;
   404) status="missing" ;;
   401 | 403)
-    warn "cannot validate the auth key: the Tailscale API returned HTTP $code.
+    warn "cannot validate the auth key $id from $source: the Tailscale API returned HTTP $code.
   Proceeding, but fix TAILSCALE_API_KEY — mint-key and delete-node need it too."
     return 0
     ;;
   *)
-    warn "cannot validate the auth key: Tailscale API returned HTTP $code.
+    warn "cannot validate the auth key $id from $source: Tailscale API returned HTTP $code.
   Proceeding blind."
     return 0
     ;;
   esac
 
   if [[ "$status" == valid* ]]; then
-    note "auth key $id is valid (expires ${status#valid })"
+    note "using Tailscale auth key $id from $source (valid until ${status#valid })"
     return 0
   fi
 
   local node
   node="$(node_state)"
   if [[ "$node" == present ]]; then
-    warn "auth key $id is spent/revoked, but '$INSTANCE' is already on the
+    warn "auth key $id from $source is spent/revoked, but '$INSTANCE' is already on the
   tailnet and does not need it (the startup script only spends a key when the
   node is not a member). Continuing."
     return 0
   fi
 
-  local reason source needs
+  local reason needs
   if [[ "$status" == missing ]]; then
     reason="unknown to Tailscale control (never existed, or purged)"
   else
     reason="revoked or spent at ${status#revoked }"
   fi
-  if [[ -f "$KEYFILE" ]]; then source="$KEYFILE"; else source="TF_VAR_tailscale_auth_key in config.env"; fi
   if [[ "$node" == absent ]]; then
     needs="'$INSTANCE' is NOT on the tailnet, so it needs a working key to join."
   else

@@ -94,6 +94,16 @@ else
   echo "!! data disk not mountable yet (label $DATA_LABEL absent)"
 fi
 
+# Tailscale SSH (the box's only inbound path) can stall — banner never answers —
+# when SELinux is enforcing (https://tailscale.com/s/ssh-selinux). Drop to
+# permissive now so tailscaled starts under a mode its SSH server works in.
+if command -v setenforce >/dev/null 2>&1; then
+  setenforce 0 >/dev/null 2>&1 || true
+  if [ -f /etc/selinux/config ]; then
+    sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
+  fi
+fi
+
 $DNF install -y curl ca-certificates sudo tar gzip
 if ! command -v tailscale >/dev/null 2>&1; then
   echo ">> installing tailscale (install.sh fetched, checksum-pinned, executed)"

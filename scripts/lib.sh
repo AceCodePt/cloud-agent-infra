@@ -374,6 +374,19 @@ instance_status() {
   fi
 }
 
+# Opaque provider instance identifier. Unlike instance_status (lifecycle state),
+# this changes when the instance is REBUILT — which is how `up` can detect that
+# a RUNNING box was replaced mid-apply (and must have a new SSH host key).
+instance_id() {
+  if [[ "$PROVIDER" == hetzner ]]; then
+    hz_server_id
+  elif [[ "$PROVIDER" == oci ]]; then
+    oci_find_instance
+  else
+    gcloud_instance describe --format='value(id)'
+  fi
+}
+
 instance_start() {
   if [[ "$PROVIDER" == hetzner ]]; then
     hz_server_start

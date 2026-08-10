@@ -63,6 +63,7 @@ else
 fi
 
 BEFORE="$(instance_status)"
+BEFORE_ID="$(instance_id || true)"
 
 if [[ "$BEFORE" == unknown ]]; then
   if [[ "$PROVIDER" == hetzner ]]; then
@@ -106,7 +107,15 @@ cat "$APPLY_LOG"
 rm -f "$APPLY_LOG"
 $apply_ok || die "terraform apply failed (see the plan/errors above)"
 
-if [[ "$BEFORE" == absent ]]; then
+# A RUNNING box can be REPLACED by apply (e.g. public-IP change): the new VM
+# gets a fresh SSH host key while the lifecycle state never leaves RUNNING, so
+# a stale known_hosts entry would fail every later SSH probe. Detect the
+# rebuild by identity and clear it before wait-ready runs.
+AFTER_ID="$(instance_id || true)"
+if [[ -n "$BEFORE_ID" && -n "$AFTER_ID" && "$BEFORE_ID" != "$AFTER_ID" ]]; then
+  echo "  instance was rebuilt (id ${BEFORE_ID:0:8}... -> ${AFTER_ID:0:8}...); clearing its stale host key"
+  ssh-keygen -R "$INSTANCE" >/dev/null 2>&1 || true
+elif [[ "$BEFORE" == absent ]]; then
   ssh-keygen -R "$INSTANCE" >/dev/null 2>&1 || true
 fi
 
