@@ -414,6 +414,33 @@ if ! command -v direnv >/dev/null 2>&1; then
   fi
 fi
 
+echo ">> tmux: EL9 ships 3.2a (too old for the dotfiles config); build latest release from GitHub"
+$DNF install -y gcc make pkg-config libevent-devel ncurses-devel
+TMUX_VERSION="$(curl -fsSL https://api.github.com/repos/tmux/tmux/releases/latest 2>/dev/null |
+  sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+TMUX_VERSION="${TMUX_VERSION#v}"
+if [ -z "$TMUX_VERSION" ] || [ "$(tmux -V 2>/dev/null | cut -d' ' -f2)" = "$TMUX_VERSION" ]; then
+  echo ">> tmux ${TMUX_VERSION:-current} already installed or latest unknown; skipping build"
+else
+  TMUX_TARBALL="$(mktemp)"
+  if curl -fsSL "https://github.com/tmux/tmux/releases/download/v${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
+      -o "$TMUX_TARBALL"; then
+    rm -rf "/tmp/tmux-${TMUX_VERSION}"
+    tar -xzf "$TMUX_TARBALL" -C /tmp
+    if (cd "/tmp/tmux-${TMUX_VERSION}" && ./configure --prefix=/usr/local >/dev/null 2>&1 && \
+        make -j"$(nproc)" >/dev/null 2>&1 && make install >/dev/null 2>&1); then
+      hash -r
+      echo ">> tmux $(tmux -V 2>/dev/null) built and installed"
+    else
+      echo "!! tmux build failed; keeping the distro package"
+    fi
+    rm -rf "/tmp/tmux-${TMUX_VERSION}"
+  else
+    echo "!! could not download tmux ${TMUX_VERSION} from GitHub releases"
+  fi
+  rm -f "$TMUX_TARBALL"
+fi
+
 echo ">> neovim: latest stable from GitHub releases (arm64 build)"
 ARCH="$(uname -m)"
 case "$ARCH" in
