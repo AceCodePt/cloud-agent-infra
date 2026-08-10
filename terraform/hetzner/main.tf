@@ -7,7 +7,7 @@ locals {
       replace(
         replace(
           replace(
-            file("${path.module}/../../scripts/templates/startup.sh"),
+            file("${path.module}/../../scripts/templates/startup.debian.sh"),
           "__DATA_DEV__", local.data_dev),
         "__DATA_LABEL__", var.data_label),
       "__INSTANCE__", var.instance_name),

@@ -49,3 +49,6 @@ backend.tf
 
 # Python bytecode from scripts/
 __pycache__/
+
+# Built images and artifacts (never committed)
+images/output/

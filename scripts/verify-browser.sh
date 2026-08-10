@@ -44,7 +44,12 @@ echo "reachable=yes"
 
 echo "packages=$(systemctl is-active agent-packages 2>/dev/null || true)"
 
-command -v chromium >/dev/null && echo "chromium=yes" || echo "chromium=no"
+if command -v chromium >/dev/null 2>&1 || \
+   flatpak list --app 2>/dev/null | grep -q org.chromium.Chromium; then
+  echo "chromium=yes"
+else
+  echo "chromium=no"
+fi
 pgrep -x Xvfb >/dev/null && echo "xvfb=yes" || echo "xvfb=no"
 swapon --noheadings --show=NAME 2>/dev/null | grep -q zram && echo "zram=yes" || echo "zram=no"
 

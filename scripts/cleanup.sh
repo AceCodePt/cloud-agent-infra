@@ -40,9 +40,18 @@ if [[ -f "$TF_DIR/backend.tf" && -d "$TF_DIR/.terraform" ]]; then
     echo ">> Skipped terraform destroy."
   fi
 else
-  echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
-  echo "   Skipping terraform destroy. If a server still exists, delete it in the"
-  echo "   Hetzner Cloud console or with:  hcloud server delete $INSTANCE"
+  if [[ "$PROVIDER" == hetzner ]]; then
+    echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
+    echo "   Skipping terraform destroy. If a server still exists, delete it in the"
+    echo "   Hetzner Cloud console or with:  hcloud server delete $INSTANCE"
+  elif [[ "$PROVIDER" == oci ]]; then
+    echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
+    echo "   Skipping terraform destroy. If an instance still exists, delete it in the"
+    echo "   OCI console or with:  oci compute instance terminate"
+  else
+    echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
+    echo "   Skipping terraform destroy."
+  fi
 fi
 
 LIVE="$(live_resources)"
@@ -61,6 +70,8 @@ if [[ -n "$LIVE" ]]; then
 else
   if [[ "$PROVIDER" == hetzner ]]; then
     echo ">> Verified with the Hetzner API: no server or volume remains."
+  elif [[ "$PROVIDER" == oci ]]; then
+    echo ">> Verified with OCI: no instance or block volume remains."
   else
     echo ">> Verified with gcloud: no instance or data disk remains."
   fi

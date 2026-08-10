@@ -3,3 +3,6 @@ title = "cloud-agent-infra"
 [allowlist]
   description = "shell variable references, not secrets"
   regexes = ['''\$API_KEY''']
+  # Multi-GB build artifacts (raw img, qcow2, tarball) under images/output/ are
+  # gitignored but gitleaks dir mode still scans them; exclude the path.
+  paths = ['''images/output/''']

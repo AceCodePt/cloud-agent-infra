@@ -17,14 +17,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ "$PROVIDER" == hetzner ]]; then
+if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci ]]; then
   STATUS="$(instance_status)"
   if [[ "$STATUS" == absent ]]; then
-    die "server '$INSTANCE' does not exist, so there is nothing to rekey.
+    die "instance '$INSTANCE' does not exist, so there is nothing to rekey.
   For a fresh build use: ./run rebuild"
   fi
   if [[ "$STATUS" == unknown ]]; then
-    die "cannot reach the Hetzner API. Check HETZNER_API_KEY in config.env."
+    die "cannot reach the $([[ "$PROVIDER" == oci ]] && echo OCI || echo Hetzner) API. Check the credentials in config.env."
   fi
 
   "$SCRIPT_DIR"/tailscale-api.sh mint
@@ -42,8 +42,8 @@ sudo systemctl restart agent-startup
 EOF
   then
     die "could not reach $SSH_USER@$INSTANCE over the tailnet to deliver the key.
-  If the box is not online, use the Hetzner Cloud web console (VNC) or a rescue
-  system to write /etc/agent/authkey, or rebuild with: ./run rebuild"
+  If the box is not online, use the OCI serial console to write /etc/agent/authkey,
+  or rebuild with: ./run rebuild"
   fi
 
   "$SCRIPT_DIR"/wait-ready.sh

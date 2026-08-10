@@ -14,12 +14,16 @@ done
 
 if [[ "$PROVIDER" == hetzner ]]; then
   echo ">> provider=hetzner instance=$INSTANCE location=${TF_VAR_location:-nbg1}"
+elif [[ "$PROVIDER" == oci ]]; then
+  echo ">> provider=oci instance=$INSTANCE region=${TF_VAR_region:-il-jerusalem-1}"
 else
   echo ">> project=$PROJECT_ID region=$REGION bucket=$STATE_BUCKET"
 fi
 
-: "${TF_VAR_zone:?zone not set in config.env}"
 : "${TF_VAR_ssh_user:?ssh_user not set in config.env}"
+if [[ "$PROVIDER" != oci ]]; then
+  : "${TF_VAR_zone:?zone not set in config.env}"
+fi
 
 if ! $MINT; then
   echo ">> Skipping auth-key minting (--no-mint)."
@@ -93,6 +97,15 @@ EOF
     echo "   then re-run: ./run bootstrap"
     tf init -input=false
   fi
+  echo ">> Bootstrap complete. Next: ./run plan && ./run apply"
+  exit 0
+fi
+
+if [[ "$PROVIDER" == oci ]]; then
+  echo ">> OCI: LOCAL Terraform state in $TF_DIR (git-ignored)."
+  echo "   For a durable backend, use OCI Object Storage (terraform backend s3"
+  echo "   with an S3-compatible endpoint) and add the keys to config.env."
+  tf init -input=false
   echo ">> Bootstrap complete. Next: ./run plan && ./run apply"
   exit 0
 fi

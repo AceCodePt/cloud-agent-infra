@@ -4,7 +4,7 @@ locals {
       replace(
         replace(
           replace(
-            file("${path.module}/../../scripts/templates/startup.sh"),
+            file("${path.module}/../../scripts/templates/startup.debian.sh"),
           "__INSTANCE__", var.instance_name),
         "__USER__", var.ssh_user),
       "__AUTHKEY__", var.tailscale_auth_key),

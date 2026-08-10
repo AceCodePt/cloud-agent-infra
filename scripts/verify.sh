@@ -32,6 +32,8 @@ STATUS="$(instance_status)"
 if [[ "$STATUS" == unknown ]]; then
   if [[ "$PROVIDER" == hetzner ]]; then
     bad "cannot read server $INSTANCE from the Hetzner API (token problem, not the VM)"
+  elif [[ "$PROVIDER" == oci ]]; then
+    bad "cannot read instance $INSTANCE from OCI (credential problem, not the VM)"
   else
     bad "cannot read instance $INSTANCE from gcloud (credential problem, not the VM)"
     printf '%s\n' "$(gcloud_identity_hint)"
@@ -43,6 +45,9 @@ fi
 if [[ "$PROVIDER" == hetzner ]]; then
   OPEN="$(hz_public_ingress)"
   assert "no inbound firewall rule opens the server" "$OPEN" "none"
+elif [[ "$PROVIDER" == oci ]]; then
+  OPEN="$(oci_public_ingress)"
+  assert "no public IP and no inbound rule opens the instance" "$OPEN" "none"
 else
   RENDERED="$(gcloud_instance describe --format='value(metadata.items)' 2>/dev/null)"
   if [[ -z "$RENDERED" ]]; then
@@ -92,11 +97,19 @@ BROWSER_ARGS=(--raw)
 $QUICK && BROWSER_ARGS+=(--quick)
 "$SCRIPT_DIR"/verify-browser.sh "${BROWSER_ARGS[@]}" >"$BROWSER_OUT" 2>&1 &
 BROWSER_PID=$!
-VM_FACTS="$(ssh_vm QUICK="$QUICK" 'bash -s' 2>/dev/null <<'VMEOF'
+VM_FACTS="$(ssh_vm QUICK="$QUICK" PROVIDER="$PROVIDER" 'bash -s' 2>/dev/null <<'VMEOF'
 set -u
-export PATH="/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
 echo "reachable=yes"
-mountpoint -q /mnt/data && echo "data_mounted=yes" || echo "data_mounted=no"
+if mountpoint -q /mnt/data; then
+  echo "data_mounted=yes"
+elif [ "$PROVIDER" = "oci" ] && [ "$(findmnt -no SOURCE / 2>/dev/null || true)" = "/dev/sdb" ]; then
+  # OCI Arch build: the data volume IS the root filesystem, so /mnt/data is a
+  # plain directory on it, not a separate mount. Accept that as mounted.
+  echo "data_mounted=yes"
+else
+  echo "data_mounted=no"
+fi
 echo "browser_owner=$(stat -c %U /mnt/data/browser 2>/dev/null || echo missing)"
 [ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
   && echo "chromium_args=ok" || echo "chromium_args=broken"
@@ -105,11 +118,11 @@ grep -q '\$\$' /usr/local/bin/headed-chromium \
 
 tailscale status >/dev/null 2>&1 && echo "ts_operator=yes" || echo "ts_operator=no"
 echo "passwd_state=$(sudo passwd -S "$(id -un)" 2>/dev/null | awk '{print $2}')"
-sudo sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' \
+sudo sshd -T 2>/dev/null | grep -qix 'passwordauthentication no' \
   && echo "sshd_passauth=off" || echo "sshd_passauth=ON"
-sudo sshd -T 2>/dev/null | grep -qx 'permitrootlogin no' \
+sudo sshd -T 2>/dev/null | grep -qix 'permitrootlogin no' \
   && echo "sshd_rootlogin=off" || echo "sshd_rootlogin=ON"
-sudo sshd -T 2>/dev/null | grep -qx 'kbdinteractiveauthentication no' \
+sudo sshd -T 2>/dev/null | grep -qix 'kbdinteractiveauthentication no' \
   && echo "sshd_kbdinteractive=off" || echo "sshd_kbdinteractive=ON"
 echo "startup_script_mode=$(stat -c %a /usr/local/sbin/agent-startup 2>/dev/null || echo missing)"
 

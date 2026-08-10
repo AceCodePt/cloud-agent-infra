@@ -22,6 +22,7 @@ tools_section() {
   if tool curl; then ok "curl"; else miss "curl" "apt install curl"; fi
   if tool tailscale; then ok "tailscale" "(used for vm_online checks)"; else miss "tailscale" "optional on this host"; fi
   if tool gcloud; then ok "gcloud"; else miss "gcloud" "needed only if PROVIDER=gcp"; fi
+  if tool oci; then ok "oci"; else miss "oci" "needed only if PROVIDER=oci (pip3 install oci-cli)"; fi
   section "Next"
   line "  ./run bootstrap   # state backend + init + mint tailscale auth key"
   line "  ./run up          # converge + verify"
@@ -31,12 +32,28 @@ shared_requirements() {
   section "Shared (both providers)"
   if [[ -n "${TF_VAR_instance_name:-}" ]]; then ok "TF_VAR_instance_name" "$TF_VAR_instance_name"; else miss "TF_VAR_instance_name" "instance name"; fi
   if [[ -n "${TF_VAR_ssh_user:-}" ]]; then ok "TF_VAR_ssh_user" "$TF_VAR_ssh_user"; else miss "TF_VAR_ssh_user" "account on the VM"; fi
-  if [[ -n "${TF_VAR_machine_type:-}" ]]; then ok "TF_VAR_machine_type" "$TF_VAR_machine_type"; else miss "TF_VAR_machine_type" "e.g. cx33 (hetzner) / e2-standard-2 (gcp)"; fi
+  if [[ -n "${TF_VAR_machine_type:-}" ]]; then ok "TF_VAR_machine_type" "$TF_VAR_machine_type"; else miss "TF_VAR_machine_type" "e.g. cx33 (hetzner) / e2-standard-2 (gcp) / VM.Standard.A1.Flex (oci)"; fi
   if [[ -n "${TAILSCALE_API_KEY:-}" ]]; then
     ok "TAILSCALE_API_KEY" "mints single-use auth keys: login.tailscale.com/admin/settings/keys"
   else
     miss "TAILSCALE_API_KEY" "required: no key -> VM never joins tailnet -> unreachable"
   fi
+}
+
+oci_section() {
+  section "Provider: oci  (terraform/oci/)"
+  if [[ -n "${OCI_TENANCY_OCID:-}" ]]; then ok "OCI_TENANCY_OCID" "tenancy OCID"; else miss "OCI_TENANCY_OCID" "tenancy OCID"; fi
+  if [[ -n "${OCI_USER_OCID:-}" ]]; then ok "OCI_USER_OCID" "user OCID"; else miss "OCI_USER_OCID" "user OCID"; fi
+  if [[ -n "${OCI_FINGERPRINT:-}" ]]; then ok "OCI_FINGERPRINT" "API key fingerprint"; else miss "OCI_FINGERPRINT" "API key fingerprint"; fi
+  if [[ -n "${OCI_PRIVATE_KEY_PATH:-}" && -f "${OCI_PRIVATE_KEY_PATH:-}" ]]; then
+    ok "OCI_PRIVATE_KEY_PATH" "$OCI_PRIVATE_KEY_PATH"
+  else
+    miss "OCI_PRIVATE_KEY_PATH" "path to the API private key PEM (~/.oci/oci_api_key.pem)"
+  fi
+  if [[ -n "${TF_VAR_region:-}" ]]; then ok "TF_VAR_region" "$TF_VAR_region (home region hosts Always Free capacity)"; else miss "TF_VAR_region" "region"; fi
+  line "  Security posture: private subnet (NO public IP) + NAT for outbound only;"
+  line "  SSH only via Tailscale; data on a labeled block volume at /mnt/data."
+  line "  Free tier: VM.Standard.A1.Flex, up to 4 OCPU / 24 GB / 200 GB block."
 }
 
 hetzner_section() {
@@ -80,6 +97,7 @@ all)
   echo "PROVIDER=${PROVIDER}  (config.env)"
   shared_requirements
   hetzner_section
+  oci_section
   gcp_section
   ;;
 hetzner)
@@ -87,13 +105,18 @@ hetzner)
   shared_requirements
   hetzner_section
   ;;
+oci)
+  echo "PROVIDER=${PROVIDER}  (config.env)"
+  shared_requirements
+  oci_section
+  ;;
 gcp)
   echo "PROVIDER=${PROVIDER}  (config.env)"
   shared_requirements
   gcp_section
   ;;
 *)
-  echo "usage: ./run setup [gcp|hetzner]" >&2
+  echo "usage: ./run setup [gcp|hetzner|oci]" >&2
   exit 1
   ;;
 esac

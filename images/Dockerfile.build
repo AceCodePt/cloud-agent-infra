@@ -1,0 +1,8 @@
+# Tools container for building/uploading the Arch ARM64 image:
+#   parted/dosfstools/e2fsprogs/util-linux -> disk partitioning + loop mounts
+#   libarchive (bsdtar)                    -> tarball extraction
+#   qemu-img                                -> raw->qcow2 conversion at upload
+FROM archlinux:latest
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm --needed parted dosfstools e2fsprogs util-linux libarchive qemu-img && \
+    rm -rf /var/cache/pacman/pkg

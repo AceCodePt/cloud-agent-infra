@@ -33,6 +33,12 @@ while :; do
   connect its rescue system. A server that boots but never joins the tailnet
   usually means the auth key was spent, revoked, expired, or missing (there is
   no public inbound, so it just looks dead). Recover with: ./run rekey"
+    elif [[ "$PROVIDER" == oci ]]; then
+      die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+  Inspect the boot with the OCI console serial connection for $INSTANCE. A VM
+  that boots but never joins the tailnet usually means the auth key was spent,
+  revoked, expired, or missing (there is no public inbound, so it just looks
+  dead). Recover with: ./run rekey"
     else
       die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
   Inspect the boot with:
@@ -51,7 +57,7 @@ while :; do
     fi
   fi
 
-  if [[ "$PROVIDER" == hetzner ]]; then
+  if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci ]]; then
     SERIAL=""
   else
     SERIAL="$(gcloud_instance get-serial-port-output 2>/dev/null || true)"
@@ -68,7 +74,7 @@ while :; do
   fi
 
   if ! $packages_done; then
-    if [[ "$PROVIDER" == hetzner ]]; then
+    if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci ]]; then
       PKG="$(ssh_vm 'systemctl is-active agent-packages' 2>/dev/null || true)"
       case "$PKG" in
       active)
