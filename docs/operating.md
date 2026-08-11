@@ -332,6 +332,18 @@ The numbers behind the sizing and browser decisions — boot time, browser memor
 zram, fingerprint, latency, cost — are measured, not guessed, and live in
 [`measurements.md`](measurements.md).
 
+To see how fast the link between this machine and the box actually is, right now:
+
+```sh
+./run speedtest
+```
+
+runs iperf3 both ways over the tailnet (`iperf3 -s` on the box via
+`systemd-run`, client locally), against the box's Tailscale IPv4, and prints
+upload (local → box) and download (box → local) in Mbit/s. `IPERF3_DURATION`,
+`IPERF3_PARALLEL`, and `IPERF3_PORT` override the defaults (5 s, 4 streams,
+5201). iperf3 must be installed on both ends.
+
 ---
 
 ## Gotchas (learned the hard way)

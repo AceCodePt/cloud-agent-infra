@@ -48,6 +48,8 @@ Tailscale
 Misc
   ssh [args]       SSH to the box over Tailscale (interactive)
   tf <args>        Raw terraform in terraform/<provider>/ (e.g. ./run tf state list)
+  speedtest        iperf3 upload+download between this machine and the box over
+                   Tailscale (IPERF3_DURATION/IPERF3_PARALLEL/IPERF3_PORT)
   fmt              terraform fmt
   validate         terraform fmt -check + validate + bash -n on every script
   check            validate + verify
@@ -98,11 +100,15 @@ ssh)
   load_config
   ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$INSTANCE" "$@"
   ;;
+speedtest) scripts/speedtest.sh "$@" ;;
 tf)
   load_config
   tf "$@"
   ;;
-fmt) tf fmt ;;
+fmt)
+  load_config
+  tf fmt
+  ;;
 validate)
   load_config
   tf fmt -check

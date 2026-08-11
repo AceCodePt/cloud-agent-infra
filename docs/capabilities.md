@@ -59,6 +59,7 @@ the defaults.
 | Command | What it does |
 |---|---|
 | `./run ssh [args]` | Interactive SSH to the box over Tailscale |
+| `./run speedtest` | iperf3 upload+download between this machine and the box, over Tailscale |
 | `./run tf <args>` | Raw terraform in `terraform/<provider>/` (`./run tf state list`) |
 | `./run fmt` / `validate` / `check` | Format / validate + `bash -n` / validate + verify |
 
