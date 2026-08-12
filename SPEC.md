@@ -39,8 +39,8 @@ nothing about any of them.
 
 ## What exists
 
-Asserted by `./run verify` — **31 checks** (the Oracle idle-check verdict SKIPs
-until it has ~17h of CPU history to judge, then is 31/31) — and it has survived
+Asserted by `./run verify` — **33 checks** (the Oracle idle-check verdict SKIPs
+until it has ~17h of CPU history to judge, then is 33/33) — and it has survived
 a full `cleanup --yes` + rebuild cycle.
 
 **The box** (active provider: `PROVIDER=oci`)
@@ -82,7 +82,11 @@ a full `cleanup --yes` + rebuild cycle.
   spin loop (`nice 19` + `CPUWeight=1`, so real work preempts it). Installed
   only where the image carries the Oracle Cloud Agent
   (`/usr/libexec/oracle-cloud-agent`), so Hetzner/Rocky and GCP boots never
-  see it and the shared template stays provider-neutral.
+  see it and the shared template stays provider-neutral. Levels: `full`
+  (continuous, ~50% CPU), `low` (6 min on / 54 min off, ~5% CPU, p95 still
+  ≈50%), `off`. Modes: `auto` (default — the daemon probes real CPU every 2h
+  and picks `off` if real usage alone clears 20%, else `low`) and `manual`
+  (operator-set level). Toggle with `./run idle <off|low|full|auto|status>`.
 - `oci-cpu-sampler` + `oci-idle-check` (phase A): a once-a-minute CPU sampler
   (rolling window on the data volume) and a **daily** timer that recomputes the
   7-day p95 CPU against the 20% reclaim floor and logs the verdict to

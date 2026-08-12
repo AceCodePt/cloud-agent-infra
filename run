@@ -50,6 +50,10 @@ Misc
   tf <args>        Raw terraform in terraform/<provider>/ (e.g. ./run tf state list)
   speedtest        iperf3 upload+download between this machine and the box over
                    Tailscale (IPERF3_DURATION/IPERF3_PARALLEL/IPERF3_PORT)
+  idle [off|low|full|auto|status]
+                   Oracle idle-burn switch (default: status). off/low/full set
+                   the CPU-burn level manually; auto returns to automatic
+                   selection; status shows mode+level+last verdict
   fmt              terraform fmt
   validate         terraform fmt -check + validate + bash -n on every script
   check            validate + verify
@@ -101,6 +105,10 @@ ssh)
   ssh -o StrictHostKeyChecking=accept-new "$SSH_USER@$INSTANCE" "$@"
   ;;
 speedtest) scripts/speedtest.sh "$@" ;;
+idle)
+  load_config
+  ssh_vm "sudo /usr/local/sbin/oci-idle-burn ${1:-status}"
+  ;;
 tf)
   load_config
   tf "$@"

@@ -118,6 +118,15 @@ recomputes the 7-day p95 CPU against the 20% floor into
 least 1000 samples (~17h)** — no definitive verdict on sparse history — and
 `./run verify` calls it in `--check-only` mode so verify stays read-only.
 
+The burn has an off/lower switch (`./run idle`, levels `full`/`low`/`off`,
+modes `auto`/`manual`). `low` = 6 min on / 54 min off per hour, which keeps
+~10% of minutes above the line — comfortably more than the ~5% that would
+threaten the p95 — so the p95 stays ≈50% at ~5% average CPU. In `auto` mode
+the daemon probes real CPU (no burn) 5 min every 2h and picks `off` when real
+usage alone clears 20%, else `low`. First auto probe, measured 2026-08-12 on
+the live box: 5 one-minute samples of **1–3% real CPU, p95 1.0%** → chose
+`low`. On a box doing no real work, `auto` settles on `low`, not `full`.
+
 Before the guard the same series measured a p95 of **~9%** (per-minute max) —
 below the reclaim floor, which is the number this guard exists to fix.
 

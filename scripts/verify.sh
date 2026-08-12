@@ -136,6 +136,8 @@ systemctl is-active oci-cpu-sampler 2>/dev/null | grep -qx active \
   && echo "cpu_sampler=active" || echo "cpu_sampler=inactive"
 IDLE_OUT="$(/usr/local/sbin/oci-idle-check --check-only 2>/dev/null || true)"
 echo "idle_check=${IDLE_OUT:-NO_DATA}"
+echo "idle_mode=$(cat /mnt/data/idle-check/burn.mode 2>/dev/null || echo auto)"
+echo "idle_level=$(cat /mnt/data/idle-check/burn.level 2>/dev/null || echo full)"
 
 for t in fzf direnv mise nvim unzip; do
   command -v "$t" >/dev/null 2>&1 \
@@ -186,6 +188,17 @@ else
   if [[ "$(fact "$VM_FACTS" oracle_agent)" == present ]]; then
     assert "Oracle idle guard running (free-tier reclaim floor)" "$(fact "$VM_FACTS" idle_guard)" "active"
     assert "Oracle idle CPU sampler running" "$(fact "$VM_FACTS" cpu_sampler)" "active"
+    # Level/mode are operator choices (off is legitimate when real usage is
+    # high); verify only that the values are valid, the daily check is the
+    # tripwire for an actually-under-the-line box.
+    case "$(fact "$VM_FACTS" idle_mode)" in
+    auto | manual) ok "idle burn mode valid ($(fact "$VM_FACTS" idle_mode))" ;;
+    *) bad "idle burn mode invalid: $(fact "$VM_FACTS" idle_mode)" ;;
+    esac
+    case "$(fact "$VM_FACTS" idle_level)" in
+    full | low | off) ok "idle burn level valid ($(fact "$VM_FACTS" idle_level))" ;;
+    *) bad "idle burn level invalid: $(fact "$VM_FACTS" idle_level)" ;;
+    esac
     IDLE="$(fact "$VM_FACTS" idle_check)"
     case "$IDLE" in
     NO_DATA*) skip "Oracle idle check (CPU history still accruing)" ;;

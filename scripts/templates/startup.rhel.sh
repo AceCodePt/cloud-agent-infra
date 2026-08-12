@@ -309,9 +309,195 @@ systemctl start exit-node-watch.service
 if [ -d /usr/libexec/oracle-cloud-agent ]; then
   cat > /usr/local/sbin/oci-idle-burn <<'BURN'
 #!/usr/bin/env bash
-# One idle-priority spin (nice 19 + CPUWeight) consumes only otherwise-idle
-# capacity and yields to real work.
-exec nice -n 19 bash -c 'while :; do :; done'
+# Oracle Always Free idle guard. Keeps the 95th-percentile CPU above Oracle's
+# 20% reclaim floor. Runs at nice 19 (lowest priority), so it only fills
+# otherwise-idle capacity and yields to real work.
+#
+# Levels:
+#   full  spin one core continuously      ~50% CPU
+#   low   spin 6 min / rest 54 min        ~5% CPU, p95 still ~50%
+#   off   no spin; rely on real usage
+# Modes:
+#   auto (default)  the daemon probes REAL cpu (no burn) every 2h; if its
+#                   7-day p95 >= 20% it sets off, else low
+#   manual          an operator set the level; the daemon leaves it alone
+#
+# Run with no args (or --help) it prints usage; `--daemon` is what systemd
+# runs. State lives in /mnt/data/idle-check/ (root-owned, survives rebuilds).
+set -uo pipefail
+
+STATE="/mnt/data/idle-check"
+MODE_FILE="$STATE/burn.mode"
+LEVEL_FILE="$STATE/burn.level"
+PROBE_FILE="$STATE/burn.last_probe"
+CYCLE_FILE="$STATE/burn.cycle_start"
+PROBE_LOG="$STATE/probe.log"
+THRESHOLD=20
+PROBE_EVERY_MIN=120
+PROBE_MIN=5
+LOW_BURN_MIN=6
+LOW_REST_MIN=54
+CYCLE_MIN=$(( LOW_BURN_MIN + LOW_REST_MIN ))
+
+usage() {
+  cat <<EOF
+oci-idle-burn: Oracle Always Free idle guard
+
+  --daemon          run the guard (used by systemd; no arguments otherwise)
+  off|low|full      set the level (switches to manual mode)
+  auto              return to automatic level selection
+  status            show mode, level, and the last idle-check verdict
+EOF
+}
+
+read_val() { # read_val <file> <default>
+  local f="$1" d="${2:-}"
+  if [ -f "$f" ]; then cat "$f" 2>/dev/null || printf '%s\n' "$d"; else printf '%s\n' "$d"; fi
+}
+
+write_val() { # write_val <file> <value>
+  mkdir -p "$STATE" 2>/dev/null || true
+  printf '%s\n' "$2" > "$1" 2>/dev/null || true
+}
+
+need_root() {
+  if ! [ -w "$STATE" ]; then
+    echo "oci-idle-burn: $STATE is not writable by $(id -un) — use sudo" >&2
+    exit 1
+  fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  "" | --help | -h | help)
+    usage
+    exit 0
+    ;;
+  --daemon)
+    ;;
+  off | low | full)
+    need_root
+    write_val "$MODE_FILE" manual
+    write_val "$LEVEL_FILE" "$cmd"
+    echo "oci-idle-burn: level=$cmd (manual). Takes effect within a minute."
+    exit 0
+    ;;
+  auto)
+    need_root
+    write_val "$MODE_FILE" auto
+    write_val "$PROBE_FILE" 0
+    echo "oci-idle-burn: auto mode. Probes real CPU every ${PROBE_EVERY_MIN} min and picks full/low/off itself."
+    exit 0
+    ;;
+  status)
+    printf 'mode=%s level=%s last_check=%s\n' \
+      "$(read_val "$MODE_FILE" auto)" \
+      "$(read_val "$LEVEL_FILE" full)" \
+      "$(tail -1 "$STATE/daily.log" 2>/dev/null || echo none)"
+    exit 0
+    ;;
+  *)
+    echo "oci-idle-burn: unknown command '$cmd'" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+# ---- daemon ----
+mkdir -p "$STATE"
+[ -f "$MODE_FILE" ]  || write_val "$MODE_FILE" auto
+[ -f "$LEVEL_FILE" ] || write_val "$LEVEL_FILE" full
+[ -f "$PROBE_FILE" ] || write_val "$PROBE_FILE" "$(date +%s)"
+[ -f "$CYCLE_FILE" ] || write_val "$CYCLE_FILE" "$(date +%s)"
+
+spin_sec() { # spin_sec <seconds>
+  timeout "$1" nice -n 19 bash -c 'while :; do :; done'
+}
+
+cpu_pct() { # cpu_pct — one 60s sample of TOTAL cpu, no burning
+  local u1 n1 s1 i1 w1 ir1 si1 st1 u2 n2 s2 i2 w2 ir2 si2 st2
+  local t1 t2 idle1 idle2 denom busy
+  read -r _ u1 n1 s1 i1 w1 ir1 si1 st1 _ _ < <(grep '^cpu ' /proc/stat)
+  sleep 60
+  read -r _ u2 n2 s2 i2 w2 ir2 si2 st2 _ _ < <(grep '^cpu ' /proc/stat)
+  t1=$(( u1 + n1 + s1 + i1 + w1 + ir1 + si1 + st1 ))
+  t2=$(( u2 + n2 + s2 + i2 + w2 + ir2 + si2 + st2 ))
+  idle1=$(( i1 + w1 )); idle2=$(( i2 + w2 ))
+  denom=$(( t2 - t1 )); busy=$(( (t2 - t1) - (idle2 - idle1) ))
+  if [ "$denom" -gt 0 ]; then echo $(( busy * 100 / denom )); else echo 0; fi
+}
+
+probe_and_decide() {
+  # The daemon is the only burner, so "pause the burn" is just: don't spin.
+  # Sample REAL cpu once a minute for PROBE_MIN minutes, then set the level:
+  # off if real usage p95 >= threshold, else low. (Never full — if real usage
+  # is low, the box needs SOME burn, and low clears the floor with margin.)
+  local i pct readout p95 level
+  for i in $(seq 1 "$PROBE_MIN"); do
+    pct="$(cpu_pct)"
+    printf '%s %s\n' "$(date +%s)" "$pct" >> "$PROBE_LOG" || true
+  done
+  readout="$(python3 - "$PROBE_LOG" "$(( $(date +%s) - 8 * 86400 ))" "$THRESHOLD" <<'PY'
+import sys
+log, cutoff, thr = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
+vals = []
+for line in open(log):
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    try:
+        ts, v = float(parts[0]), float(parts[1])
+    except ValueError:
+        continue
+    if ts >= cutoff:
+        vals.append(v)
+if not vals:
+    print("0.0 low")
+    sys.exit(0)
+vals.sort()
+p95 = vals[int(0.95 * (len(vals) - 1))]
+print("%.1f %s" % (p95, "off" if p95 >= thr else "low"))
+PY
+)"
+  p95="${readout%% *}"
+  level="${readout##* }"
+  write_val "$LEVEL_FILE" "$level"
+  logger -t oci-idle-burn "auto probe: real-usage p95=$p95 threshold=$THRESHOLD -> level=$level"
+  write_val "$PROBE_FILE" "$(date +%s)"
+}
+
+while true; do
+  mode="$(read_val "$MODE_FILE" auto)"
+  level="$(read_val "$LEVEL_FILE" full)"
+  now=$(date +%s)
+
+  if [ "$mode" = auto ]; then
+    lp="$(read_val "$PROBE_FILE" 0)"
+    if [ $(( now - lp )) -ge $(( PROBE_EVERY_MIN * 60 )) ]; then
+      probe_and_decide
+      level="$(read_val "$LEVEL_FILE" low)"
+      now=$(date +%s)
+    fi
+  fi
+
+  case "$level" in
+    full) spin_sec 60 ;;
+    low)
+      cs="$(read_val "$CYCLE_FILE" "$now")"
+      elapsed=$(( now - cs ))
+      if [ "$elapsed" -ge "$CYCLE_MIN" ]; then
+        write_val "$CYCLE_FILE" "$now"
+        elapsed=0
+      fi
+      if [ "$elapsed" -lt "$LOW_BURN_MIN" ]; then
+        spin_sec 60
+      else
+        sleep 60
+      fi
+      ;;
+    *) sleep 60 ;;
+  esac
+done
 BURN
   chmod 755 /usr/local/sbin/oci-idle-burn
 
@@ -321,7 +507,7 @@ Description=Oracle Always Free idle guard: keep p95 CPU above 20%%
 After=multi-user.target
 
 [Service]
-ExecStart=/usr/local/sbin/oci-idle-burn
+ExecStart=/usr/local/sbin/oci-idle-burn --daemon
 Nice=19
 CPUWeight=1
 Restart=always
@@ -340,8 +526,23 @@ UNIT
 #!/usr/bin/env bash
 set -uo pipefail
 LOG="/mnt/data/idle-check/cpu.log"
+# oci-cpu-sampler is a daemon, not a query command. The read-only status check
+# lives in oci-idle-check; point anyone who tries flags here at the right tool.
+if [ $# -gt 0 ]; then
+  echo "oci-cpu-sampler: this is a background daemon and takes no arguments." >&2
+  echo "oci-cpu-sampler: to check the idle status read-only, run:  sudo /usr/local/sbin/oci-idle-check --check-only" >&2
+  exit 2
+fi
 [ -d /mnt/data ] || exit 1                 # history lives on the data volume
 mkdir -p /mnt/data/idle-check
+# Fail fast when run by hand as a non-root user: the log is root-owned (the
+# systemd service runs as root), so a hand-run would silently loop on
+# "Permission denied" every minute. Only the service is meant to write it.
+if ! [ -w "$LOG" ] && ! [ -w "$(dirname "$LOG")" ]; then
+  echo "oci-cpu-sampler: $LOG is not writable by $(id -un)" >&2
+  echo "oci-cpu-sampler: run via systemd (sudo systemctl restart oci-cpu-sampler)" >&2
+  exit 1
+fi
 while true; do
   read -r _ u1 n1 s1 i1 w1 ir1 si1 st1 _ _ < <(grep '^cpu ' /proc/stat)
   sleep 60
@@ -401,6 +602,14 @@ PY
 )"
 guard="$(systemctl is-active oci-idle-burn 2>/dev/null || echo unknown)"
 if [ "$CHECK_ONLY" -ne 1 ]; then
+  # Only the daily timer (root) writes OUT; a hand-run as a non-root user
+  # would fail on the root-owned log, so fail fast instead of appending a
+  # blank line.
+  if ! [ -w "$OUT" ] && ! [ -w "$(dirname "$OUT")" ]; then
+    echo "oci-idle-check: $OUT is not writable by $(id -un)" >&2
+    echo "oci-idle-check: run via systemd (sudo systemctl start oci-idle-check)" >&2
+    exit 1
+  fi
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $verdict p95=$p95 guard=$guard" >> "$OUT"
   logger -t oci-idle-check "verdict=$verdict p95=$p95 (floor $THRESHOLD% over $WINDOW_DAYS days) guard=$guard"
 fi

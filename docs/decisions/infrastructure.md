@@ -117,6 +117,19 @@ Two design points:
   verdict is withheld until at least 1000 samples (~17h) exist, so sparse
   history is never read as SAFE. `verify.sh` asserts the guard and sampler run
   on Oracle boxes and are absent everywhere else.
+- **An off/lower switch.** Continuous burn is overkill when real usage clears
+  the line. The guard has three levels — `full` (continuous, ~50% CPU), `low`
+  (6 min on / 54 min off per hour: ~5% average CPU while the p95 stays ≈50%,
+  because ~10% of minutes above the line beats the 5% that would threaten the
+  p95), and `off` (no burn). Two modes: `auto` (default) and `manual`. In
+  `auto`, the daemon probes **real** CPU — it is the only burner, so a probe is
+  just not spinning — 5 min every 2h; if the probe's 7-day p95 ≥ 20% it sets
+  `off` (real usage alone clears the floor), else `low`. `manual` freezes the
+  level until an operator changes it (`./run idle <off|low|full|auto|status>`).
+  The daemon stays running at every level (`off` = sleep loop), so
+  `verify.sh`'s "guard running" check stays green and `off` is a deliberate
+  choice, not drift — the daily check is what flags a box genuinely under the
+  line. State lives on the data volume, so a level choice survives rebuilds.
 
 ## Tailscale-only access, dedicated VPC, IAP as break-glass — **Made (GCP path)**
 
