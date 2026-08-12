@@ -757,7 +757,7 @@ dnf config-manager --set-disabled ol9_ksplice 2>/dev/null || true
 $DNF makecache || echo "!! makecache failed (continuing; dnf will retry per-install)"
 
 echo ">> wave 1: CLI tools"
-$DNF install -y git stow tmux python3-pip zsh gh fzf gpg unzip
+$DNF install -y git stow tmux python3-pip zsh gh fzf fd-find ripgrep gpg unzip
 $DNF group install -y "Development Tools"
 
 echo ">> direnv: not packaged for EL9, install the static binary from GitHub"
