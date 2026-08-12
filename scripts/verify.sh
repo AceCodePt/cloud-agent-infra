@@ -128,6 +128,15 @@ systemctl is-active exit-node-watch 2>/dev/null | grep -qx active \
 [ -x /usr/local/sbin/exit-node-watch ] \
   && echo "watchdog_script=present" || echo "watchdog_script=missing"
 
+systemctl is-active oci-idle-burn 2>/dev/null | grep -qx active \
+  && echo "idle_guard=active" || echo "idle_guard=inactive"
+[ -d /usr/libexec/oracle-cloud-agent ] \
+  && echo "oracle_agent=present" || echo "oracle_agent=absent"
+systemctl is-active oci-cpu-sampler 2>/dev/null | grep -qx active \
+  && echo "cpu_sampler=active" || echo "cpu_sampler=inactive"
+IDLE_OUT="$(/usr/local/sbin/oci-idle-check --check-only 2>/dev/null || true)"
+echo "idle_check=${IDLE_OUT:-NO_DATA}"
+
 for t in fzf direnv mise nvim unzip; do
   command -v "$t" >/dev/null 2>&1 \
     && echo "${t}=present" || echo "${t}=missing"
@@ -171,6 +180,27 @@ else
   assert "startup script mode 700" "$(fact "$VM_FACTS" startup_script_mode)" "700"
   assert "exit-node watchdog running" "$(fact "$VM_FACTS" watchdog)" "active"
   assert "exit-node watchdog script present" "$(fact "$VM_FACTS" watchdog_script)" "present"
+
+  # The idle guard installs itself only where the image carries the Oracle
+  # Cloud Agent; assert it there, and its absence everywhere else.
+  if [[ "$(fact "$VM_FACTS" oracle_agent)" == present ]]; then
+    assert "Oracle idle guard running (free-tier reclaim floor)" "$(fact "$VM_FACTS" idle_guard)" "active"
+    assert "Oracle idle CPU sampler running" "$(fact "$VM_FACTS" cpu_sampler)" "active"
+    IDLE="$(fact "$VM_FACTS" idle_check)"
+    case "$IDLE" in
+    NO_DATA*) skip "Oracle idle check (CPU history still accruing)" ;;
+    SAFE*) ok "Oracle idle check: $IDLE" ;;
+    *) bad "Oracle idle check: $IDLE — 7-day p95 below the 20% reclaim floor" ;;
+    esac
+  else
+    if [[ "$(fact "$VM_FACTS" idle_guard)" == active ]]; then
+      bad "Oracle idle guard running on a box without the Oracle Cloud Agent"
+    elif [[ "$(fact "$VM_FACTS" cpu_sampler)" == active ]]; then
+      bad "Oracle idle sampler running on a box without the Oracle Cloud Agent"
+    else
+      ok "Oracle idle guard correctly absent (no Oracle Cloud Agent)"
+    fi
+  fi
 
   # Phase B owns every CLI tool below, so while it is re-running (a reboot, or
   # agent-startup restarting it) dnf can be mid-transaction replacing packages

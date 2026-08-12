@@ -31,6 +31,7 @@ the premise is unevidenced".
 | Native VM, not a container on COS | Made |
 | Debian 12 from Google's image family, not Arch | Superseded |
 | Oracle Linux 9 from OCI platform images, not a custom Arch image | Made |
+| Oracle Always Free idle guard (CPU floor) | Made |
 | One RHEL-family startup template for every provider | Made |
 | Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; OCI uses a reserved public IPv4+IPv6 gated to UDP 41641 + serial console, Hetzner an empty-rule firewall) |
 | Separate persistent data disk at `/mnt/data` | Made |

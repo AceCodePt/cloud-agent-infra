@@ -303,6 +303,159 @@ systemctl daemon-reload
 systemctl enable exit-node-watch.service
 systemctl start exit-node-watch.service
 
+# --- Oracle Cloud Always Free idle guard ---
+# Why it exists, and why it self-detects the provider instead of using a token:
+# docs/decisions/infrastructure.md ("Oracle Always Free idle guard").
+if [ -d /usr/libexec/oracle-cloud-agent ]; then
+  cat > /usr/local/sbin/oci-idle-burn <<'BURN'
+#!/usr/bin/env bash
+# One idle-priority spin (nice 19 + CPUWeight) consumes only otherwise-idle
+# capacity and yields to real work.
+exec nice -n 19 bash -c 'while :; do :; done'
+BURN
+  chmod 755 /usr/local/sbin/oci-idle-burn
+
+  cat > /etc/systemd/system/oci-idle-burn.service <<'UNIT'
+[Unit]
+Description=Oracle Always Free idle guard: keep p95 CPU above 20%%
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/sbin/oci-idle-burn
+Nice=19
+CPUWeight=1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable oci-idle-burn.service
+  systemctl start oci-idle-burn.service
+
+  # Daily self-verification: a dead burn unit would silently fall back under
+  # the reclaim line, so sample once a minute and recompute the 7-day p95 daily.
+  cat > /usr/local/sbin/oci-cpu-sampler <<'SAMPLER'
+#!/usr/bin/env bash
+set -uo pipefail
+LOG="/mnt/data/idle-check/cpu.log"
+[ -d /mnt/data ] || exit 1                 # history lives on the data volume
+mkdir -p /mnt/data/idle-check
+while true; do
+  read -r _ u1 n1 s1 i1 w1 ir1 si1 st1 _ _ < <(grep '^cpu ' /proc/stat)
+  sleep 60
+  read -r _ u2 n2 s2 i2 w2 ir2 si2 st2 _ _ < <(grep '^cpu ' /proc/stat)
+  t1=$(( u1 + n1 + s1 + i1 + w1 + ir1 + si1 + st1 ))
+  t2=$(( u2 + n2 + s2 + i2 + w2 + ir2 + si2 + st2 ))
+  idle1=$(( i1 + w1 )); idle2=$(( i2 + w2 ))
+  denom=$(( t2 - t1 )); busy=$(( (t2 - t1) - (idle2 - idle1) ))
+  pct=0
+  [ "$denom" -gt 0 ] && pct=$(( busy * 100 / denom ))
+  printf '%s %s\n' "$(date +%s)" "$pct" >> "$LOG" || true
+  lines=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+  if [ "$lines" -gt 20000 ]; then
+    tail -n 20000 "$LOG" > "$LOG".tmp 2>/dev/null && mv "$LOG".tmp "$LOG"
+  fi
+done
+SAMPLER
+  chmod 755 /usr/local/sbin/oci-cpu-sampler
+
+  cat > /usr/local/sbin/oci-idle-check <<'CHECK'
+#!/usr/bin/env bash
+set -uo pipefail
+LOG="/mnt/data/idle-check/cpu.log"
+OUT="/mnt/data/idle-check/daily.log"
+THRESHOLD=20
+WINDOW_DAYS=7
+MIN_SAMPLES=1000          # one per minute: ~16.7h of history before a verdict
+CHECK_ONLY=0
+[ "${1:-}" = "--check-only" ] && CHECK_ONLY=1
+mkdir -p /mnt/data/idle-check
+now=$(date +%s)
+cutoff=$(( now - WINDOW_DAYS * 86400 ))
+# The timer (Persistent=true) can fire before the sampler's first sample lands;
+# a missing or tiny log is NO_DATA, not a verdict.
+[ -s "$LOG" ] || { echo "NO_DATA 0"; exit 0; }
+read -r verdict p95 <<< "$(python3 - "$LOG" "$cutoff" "$THRESHOLD" "$MIN_SAMPLES" <<'PY'
+import sys
+log, cutoff, thr, min_samples = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4])
+vals = []
+for line in open(log):
+    parts = line.split()
+    if len(parts) != 2:
+        continue
+    try:
+        ts, v = float(parts[0]), float(parts[1])
+    except ValueError:
+        continue
+    if ts >= cutoff:
+        vals.append(v)
+if len(vals) < min_samples:
+    print("NO_DATA 0")
+    sys.exit(0)
+vals.sort()
+p95 = vals[int(0.95 * (len(vals) - 1))]
+print("SAFE" if p95 >= thr else "AT_RISK", p95)
+PY
+)"
+guard="$(systemctl is-active oci-idle-burn 2>/dev/null || echo unknown)"
+if [ "$CHECK_ONLY" -ne 1 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $verdict p95=$p95 guard=$guard" >> "$OUT"
+  logger -t oci-idle-check "verdict=$verdict p95=$p95 (floor $THRESHOLD% over $WINDOW_DAYS days) guard=$guard"
+fi
+echo "$verdict $p95"
+case "$verdict" in
+  NO_DATA) exit 0 ;;
+  SAFE) exit 0 ;;
+  *) exit 1 ;;
+esac
+CHECK
+  chmod 755 /usr/local/sbin/oci-idle-check
+
+  cat > /etc/systemd/system/oci-cpu-sampler.service <<'UNIT'
+[Unit]
+Description=cloud-agent CPU sampler: 1-minute samples for the Oracle idle check
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/sbin/oci-cpu-sampler
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable oci-cpu-sampler.service
+  systemctl start oci-cpu-sampler.service
+
+  cat > /etc/systemd/system/oci-idle-check.service <<'UNIT'
+[Unit]
+Description=Oracle idle check: 7-day p95 CPU against the 20% reclaim floor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/oci-idle-check
+UNIT
+
+  cat > /etc/systemd/system/oci-idle-check.timer <<'UNIT'
+[Unit]
+Description=daily Oracle idle 20% verification
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable oci-idle-check.timer
+  systemctl start oci-idle-check.timer
+fi
+
 # --- virtual-display browser stack (phase B is deferred; this is the config) ---
 cat > /etc/systemd/system/xvfb.service <<'UNIT'
 [Unit]

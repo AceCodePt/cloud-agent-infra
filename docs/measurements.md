@@ -93,6 +93,37 @@ what a persistent profile's session cookie is worth — is a property of the app
 that owns the account, and lives with it in
 [`AceCodePt/linkedin-reader`](https://github.com/AceCodePt/linkedin-reader).
 
+## Oracle Always Free idle guard (OCI A1.Flex)
+
+Measured 2026-08-12 on the live box (OCI Always Free `VM.Standard.A1.Flex`,
+2 OCPU / 12 GB, `il-jerusalem-1`, Oracle Linux 9). Oracle reclaims Always Free
+instances whose 95th-percentile CPU, network **and** (A1 only) memory
+utilization all stay under 20% across a 7-day window. The box answers that
+with `oci-idle-burn`: one idle-priority spin loop (`nice 19`, `CPUWeight=1`).
+
+| What | Value |
+|---|---|
+| Guard process CPU (host `top`) | 93–99% of one core, at `NI 19` |
+| `CpuUtilization` per-minute max, steady state | **~50%** (one of two OCPUs) |
+| Same, during the 04:55 deploy minute | 73.1% |
+| 95th percentile, post-guard per-minute max | **73.1%** (>20% floor with 3.5× margin) |
+| On-box 1-minute sampler (first sample) | 50.0% — matches OCI's `CpuUtilization` |
+| Real work preemption | loop drops to ~0% the moment the core is wanted (nice 19 + `CPUWeight=1`) |
+| Footprint | installed only where `/usr/libexec/oracle-cloud-agent` exists |
+
+The box also runs `oci-cpu-sampler` (1-min samples to
+`/mnt/data/idle-check/cpu.log`) and a daily `oci-idle-check` timer that
+recomputes the 7-day p95 CPU against the 20% floor into
+`/mnt/data/idle-check/daily.log`. The check reports **NO_DATA until it has at
+least 1000 samples (~17h)** — no definitive verdict on sparse history — and
+`./run verify` calls it in `--check-only` mode so verify stays read-only.
+
+Before the guard the same series measured a p95 of **~9%** (per-minute max) —
+below the reclaim floor, which is the number this guard exists to fix.
+
+Note: OCI Monitoring ingestion lags ~15–25 min, so "the last hour" includes
+pre-guard data for ~20 min after a deploy.
+
 ## Measurement traps worth remembering
 
 **Non-interactive SSH has a minimal `PATH`.** `swapon` and `zramctl` live in

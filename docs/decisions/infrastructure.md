@@ -82,6 +82,42 @@ pipeline (build/upload/import scripts, `startup.arch.sh`, `startup.image.sh`,
 `images/` build source) was removed in the same change; the built artifacts in
 `images/output/` were kept on disk.
 
+## Oracle Always Free idle guard (CPU floor) — **Made**
+
+Oracle reclaims "idle" Always Free instances: if the **95th-percentile** CPU,
+network **and** (A1 shapes only) memory utilization all stay **under 20%** over
+a 7-day window, the instance is deemed idle and reclaimed. Because the verdict
+is an **AND** of the three metrics, keeping any one of them above 20% protects
+the box. Memory (the browser) and network already ride above the line in
+practice, so a **CPU floor** is the reliable lever — measured before the guard
+at a 7-day-permilled p95 of **~9%**, far under the reclaim line
+(`../measurements.md`).
+
+The floor is one **idle-priority spin loop** (`oci-idle-burn`, `nice 19` +
+`CPUWeight=1`): it consumes only otherwise-idle capacity and is preempted the
+moment real work wants the core. Steady-state it reads ~50% (one of two OCPUs),
+p95 of the per-minute max **73%** vs the 20% floor with 3.5× margin.
+
+Two design points:
+
+- **Provider-neutral by self-detection, not a token.** The guard installs itself
+  only where the image carries the Oracle Cloud Agent
+  (`/usr/libexec/oracle-cloud-agent`). That directory exists on OCI platform
+  images and nowhere else, so Hetzner/Rocky and GCP boots never see it and the
+  shared `startup.rhel.sh` stays the single provider-neutral template. Same
+  pattern as the data-disk `LABEL=` discovery. A non-Oracle box that somehow ran
+  an Oracle-with-agent image would correctly get the guard, because the reclaim
+  risk comes from being on Oracle's free tier and the agent's presence is its
+  reliable signal.
+- **Daily self-verification, not faith.** A dead burn unit would silently let
+  the box fall back under the reclaim line. `oci-cpu-sampler` samples the box's
+  own CPU once a minute (rolling window on `/mnt/data/idle-check/cpu.log`), and
+  `oci-idle-check` runs daily (systemd timer, `Persistent=true`) recomputing the
+  7-day p95 against the 20% floor into `/mnt/data/idle-check/daily.log`. A
+  verdict is withheld until at least 1000 samples (~17h) exist, so sparse
+  history is never read as SAFE. `verify.sh` asserts the guard and sampler run
+  on Oracle boxes and are absent everywhere else.
+
 ## Tailscale-only access, dedicated VPC, IAP as break-glass — **Made (GCP path)**
 
 *Describes the GCP design. The box now runs on Hetzner, whose equivalent is: an

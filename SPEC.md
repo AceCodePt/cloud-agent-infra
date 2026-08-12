@@ -39,8 +39,9 @@ nothing about any of them.
 
 ## What exists
 
-Asserted by `./run verify` — **28 checks, passing** — and it has survived a full
-`cleanup --yes` + rebuild cycle.
+Asserted by `./run verify` — **31 checks** (the Oracle idle-check verdict SKIPs
+until it has ~17h of CPU history to judge, then is 31/31) — and it has survived
+a full `cleanup --yes` + rebuild cycle.
 
 **The box** (active provider: `PROVIDER=oci`)
 
@@ -76,6 +77,17 @@ Asserted by `./run verify` — **28 checks, passing** — and it has survived a 
   deploys its own wrapper — this repo knows nothing about accounts.
 - `x11vnc`, installed but not enabled — started by hand via `./run browser`
 - zram compressed swap
+- `oci-idle-burn` (phase A): the Oracle Always Free idle guard — keeps the
+  95th-percentile CPU above Oracle's 20% reclaim floor with an idle-priority
+  spin loop (`nice 19` + `CPUWeight=1`, so real work preempts it). Installed
+  only where the image carries the Oracle Cloud Agent
+  (`/usr/libexec/oracle-cloud-agent`), so Hetzner/Rocky and GCP boots never
+  see it and the shared template stays provider-neutral.
+- `oci-cpu-sampler` + `oci-idle-check` (phase A): a once-a-minute CPU sampler
+  (rolling window on the data volume) and a **daily** timer that recomputes the
+  7-day p95 CPU against the 20% reclaim floor and logs the verdict to
+  `/mnt/data/idle-check/daily.log`. Same Oracle-only guard: a dead burn unit is
+  caught within a day instead of at reclaim. Verify trips on a non-SAFE result.
 
 ## What does not exist
 
