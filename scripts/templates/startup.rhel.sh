@@ -760,6 +760,11 @@ echo ">> wave 1: CLI tools"
 $DNF install -y git stow tmux python3-pip zsh gh fzf fd-find ripgrep gpg unzip
 $DNF group install -y "Development Tools"
 
+echo ">> lazygit: not packaged for EL9, install from the atim/lazygit copr"
+$DNF install -y dnf-plugins-core
+$DNF copr enable atim/lazygit -y
+$DNF install -y lazygit
+
 echo ">> direnv: not packaged for EL9, install the static binary from GitHub"
 if ! command -v direnv >/dev/null 2>&1; then
   DIRENV_VERSION="v2.37.1"
