@@ -9,8 +9,8 @@ output "private_ip" {
 }
 
 output "public_ip" {
-  description = "Ephemeral public IPv4 of the agent VNIC (staging fallback)"
-  value       = oci_core_instance.agent.public_ip
+  description = "Reserved public IPv4 of the agent VNIC (stable Tailscale direct endpoint)"
+  value       = oci_core_public_ip.agent.ip_address
 }
 
 output "availability_domain" {

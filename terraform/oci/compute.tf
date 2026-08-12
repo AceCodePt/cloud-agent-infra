@@ -70,6 +70,9 @@ resource "oci_core_instance" "agent" {
   }
 
   create_vnic_details {
+    # No EPHEMERAL public IP on the VNIC: the reserved public IPv4 comes from
+    # oci_core_public_ip below, so a second (ephemeral) address would be
+    # pointless. The subnet is public, so the reserved IP can attach.
     subnet_id        = oci_core_subnet.agent.id
     assign_public_ip = false
     hostname_label   = var.instance_name
@@ -108,4 +111,20 @@ resource "oci_core_ipv6" "agent" {
   subnet_id    = oci_core_subnet.agent.id
   lifetime     = "RESERVED"
   display_name = "${var.instance_name}-ipv6"
+}
+
+# Public IPv4 for a stable direct (non-DERP) Tailscale endpoint. "RESERVED"
+# keeps it fixed across stop/start and rebuilds. The VNIC is in a public
+# subnet (prohibit_public_ip_on_vnic = false), so the IP attaches to the
+# existing primary private IP — no instance rebuild needed. This is what lets
+# the box be reached directly even from symmetric-NAT (office) networks.
+data "oci_core_private_ips" "agent" {
+  vnic_id = data.oci_core_vnic_attachments.agent.vnic_attachments[0].vnic_id
+}
+
+resource "oci_core_public_ip" "agent" {
+  compartment_id = local.compartment
+  display_name   = "${var.instance_name}-ipv4"
+  lifetime       = "RESERVED"
+  private_ip_id  = data.oci_core_private_ips.agent.private_ips[0].id
 }

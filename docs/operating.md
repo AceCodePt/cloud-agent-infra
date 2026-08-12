@@ -284,17 +284,29 @@ there.)
 
 ---
 
-## Security: no public inbound (IPv4); one IPv6 Tailscale port
+## Security: reserved public IPv4 + IPv6, only Tailscale WireGuard inbound
 
-The instance has **no public IPv4** (the VNIC is created with
-`assign_public_ip = false`); IPv4 stays behind a NAT gateway with an empty
-ingress rule set. The **only** public ingress in the security list is
-**IPv6 UDP 41641** — Tailscale's WireGuard listener — which lets the box take a
-direct (non-DERP) Tailscale path from any IPv6-capable network. WireGuard does
-not respond to unauthenticated handshakes, so nothing else is exposed; the
-firewalld on the box opens the same single port. `verify.sh` asserts all of
-this: no public IPv4, and the security list's only ingress rule is IPv6
-UDP 41641 from `::/0`.
+The instance has a **reserved public IPv4** (a stable `oci_core_public_ip`
+attached to the VNIC) and a **public IPv6**. Both are there for one reason:
+Tailscale needs a reachable endpoint on the box to establish a **direct,
+non-DERP** path. IPv4 egress flows through the internet gateway sourcing the
+public IP (there is no NAT gateway).
+
+The security list's **only** public ingress is Tailscale's WireGuard port on
+**both families** — **IPv4 UDP 41641** from `0.0.0.0/0` and **IPv6 UDP 41641**
+from `::/0`. WireGuard does not respond to unauthenticated handshakes (no
+banner, no reply, no amplification), so nothing else is exposed; the firewalld
+on the box opens the same single port. `verify.sh` asserts all of this: a
+public IPv4 is present, and the security list's only ingress rules are
+IPv4+IPv6 UDP 41641.
+
+Why a **reserved** IP rather than ephemeral: the box is disposable and rebuilt
+frequently (`tf destroy -target=... && ./run up`), and an ephemeral IP would
+change on every rebuild — forcing the tunnel through a DERP window while peers
+re-learn the endpoint. The reserved IP is $0 on OCI and survives rebuilds, so
+the endpoint is stable and the reputation history stays the box's own. (Scan
+exposure is identical either way; the reserved IP simply avoids recycling a
+possibly-dirty pool address.)
 
 There is **no other public inbound** — you reach the box over the Tailscale
 tailnet, established outbound. Your user has **passwordless sudo**, acceptable
@@ -350,7 +362,8 @@ upload (local → box) and download (box → local) in Mbit/s. `IPERF3_DURATION`
 
 - **GCP's `default` network is wide open** (tcp:22, 3389, icmp from `0.0.0.0/0`).
   On the GCP path, use the dedicated VPC in `terraform/gcp/network.tf`, or delete
-  those rules. OCI blocks inbound via a security list with no ingress rules.
+  those rules. OCI blocks inbound via a security list whose only ingress is
+  IPv4+IPv6 UDP 41641.
 - **Deleting `default-allow-ssh` makes plain `gcloud compute ssh` hang** — it has
   no route in. Use `--tunnel-through-iap`, or rely on Tailscale. (GCP path only.)
 - **Tailscale SSH ACL rules are first-match-wins.** A broad `action: check` rule

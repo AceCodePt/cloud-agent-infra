@@ -32,8 +32,7 @@ approval lives in the sibling repo
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  OCI A1.Flex  "cloud-agent"  (Oracle Linux 9, il-jerusalem-1) │
-│  2 OCPU / 12 GB, Always Free, no public IPv4                  │
-│                                                               │
+│  2 OCPU / 12 GB, Always Free, reserved public IPv4            │
 │   • stock Oracle Linux 9 platform image + dnf                 │
 │   • tailscaled (systemd) -> joins tailnet as "cloud-agent"    │
 │   • hardened OpenSSH: `ssh <user>@cloud-agent` lands here     │
@@ -43,7 +42,7 @@ approval lives in the sibling repo
 └──────────────────────────────────────────────────────────────┘
           ▲
           │  Tailscale (private tailnet; public ingress is only
-          │  IPv6 UDP 41641 for the direct, non-DERP path)
+          │  IPv4+IPv6 UDP 41641 for the direct, non-DERP path)
           ▼
    Any tailnet device:  ssh <user>@cloud-agent
 ```

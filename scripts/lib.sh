@@ -319,11 +319,13 @@ for v in d.get("data", []):
   printf '%s' "${live# }"
 }
 
-# Asserts the repo's inbound posture on OCI: the instance must have NO public
-# IPv4 and the subnet security list must have NO IPv4 ingress; the ONLY allowed
-# ingress is IPv6 UDP 41641 (Tailscale's WireGuard port, for the direct path).
-# Prints exactly 'none' when the posture holds; anything else fails the
-# assertion.
+# Asserts the repo's inbound posture on OCI. The instance must have a public
+# IPv4 (the reserved public IP that gives it a stable direct Tailscale
+# endpoint) AND a public IPv6, and the subnet security list's ONLY public
+# ingress must be Tailscale's WireGuard port on BOTH families — IPv4 UDP 41641
+# from 0.0.0.0/0 and IPv6 UDP 41641 from ::/0. Anything else — TCP 22, other
+# ports/protocols/prefixes — is drift. Prints exactly 'none' when the posture
+# holds; anything else fails the assertion.
 oci_public_ingress() {
   local id subnet sl
   id="$(oci_find_instance)"
@@ -342,8 +344,8 @@ for v in d.get("data", []):
         sys.exit(0)
 sys.exit(0)
 ' 2>/dev/null)"
-  if [[ -n "$pub" ]]; then
-    printf 'instance has a public IPv4 (%s)' "$pub"
+  if [[ -z "$pub" ]]; then
+    printf 'instance has NO public IPv4 (wanted: the reserved direct endpoint)'
     return 0
   fi
 
@@ -373,21 +375,23 @@ for s in sls:
 ' 2>/dev/null | head -1)"
   [[ -n "$sl" ]] || { printf 'could not read security list'; return 0; }
 
-  # Allowed ingress exactly: IPv6 UDP 41641 from ::/0 (Tailscale WireGuard).
-  # Anything else — any IPv4 ingress, any other port/protocol/prefix — is drift.
+  # Allowed ingress exactly: IPv4 UDP 41641 from 0.0.0.0/0 and IPv6 UDP 41641
+  # from ::/0 (Tailscale WireGuard, direct path on either family). Anything
+  # else — any other port/protocol/prefix — is drift.
   oci network security-list get --security-list-id "$sl" 2>/dev/null | python3 -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+allowed = [("0.0.0.0/0", "17", 41641, 41641), ("::/0", "17", 41641, 41641)]
 rules = d.get("data", {}).get("ingress-security-rules", [])
 for r in rules:
     src = r.get("source", "")
     proto = r.get("protocol", "")
     udp = (r.get("udp-options") or {}).get("destination-port-range") or {}
     lo, hi = udp.get("min", None), udp.get("max", None)
-    if src == "::/0" and proto == "17" and (lo, hi) == (41641, 41641):
+    if (src, proto, lo, hi) in allowed:
         continue
     print("unexpected ingress rule: source=%s protocol=%s udp=%s-%s" % (src, proto, lo, hi))
     sys.exit(0)

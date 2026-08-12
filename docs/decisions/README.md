@@ -32,7 +32,7 @@ the premise is unevidenced".
 | Debian 12 from Google's image family, not Arch | Superseded |
 | Oracle Linux 9 from OCI platform images, not a custom Arch image | Made |
 | One RHEL-family startup template for every provider | Made |
-| Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; OCI uses no public IP + serial console, Hetzner an empty-rule firewall) |
+| Tailscale-only access, dedicated VPC, IAP as break-glass | Made (GCP path; OCI uses a reserved public IPv4+IPv6 gated to UDP 41641 + serial console, Hetzner an empty-rule firewall) |
 | Separate persistent data disk at `/mnt/data` | Made |
 | Two-phase boot | Made |
 | One-off auth keys minted per build, validated before apply | Made |

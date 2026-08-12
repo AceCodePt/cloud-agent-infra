@@ -112,6 +112,11 @@ first_global_v6() {
 LOCAL_V6="$(first_global_v6)"
 REMOTE_V6="$(ssh_vm "export PATH=/usr/local/sbin:/usr/sbin:/sbin:\$PATH; $(declare -f first_global_v6); first_global_v6" 2>/dev/null || true)"
 
+# The box's public IPv4 (reserved public IP on the VNIC). The IPv4 route via
+# the internet gateway sources egress from it, and it is the direct endpoint
+# Tailscale advertises.
+REMOTE_PUB4="$(ssh_vm "curl -4sf --max-time 5 https://ifconfig.me 2>/dev/null || true" 2>/dev/null || true)"
+
 echo
 echo "  >> path"
 if [[ "$DIRECT" == true ]]; then
@@ -124,25 +129,25 @@ echo
 echo "  >> insight"
 if [[ "$DIRECT" == true ]]; then
   echo "     The link is direct, so these are the real wire numbers. If they are"
-  echo "     still low, the bottleneck is closer to home: local Wi-Fi, the ISP"
-  echo "     uplink, or the OCI NAT gateway."
+  echo "     still low, the bottleneck is closer to home: local Wi-Fi or the ISP"
+  echo "     uplink."
 else
   echo "     This is why it is slow: the packet is being RELAYED, not sent direct."
   echo "     A DERP relay re-encrypts and re-packetizes every byte over its own"
   echo "     uplink, so throughput is capped by the relay plus a long detour."
-  echo "     There is no direct path because no address family is routable end"
-  echo "     to end between the two sides:"
+  echo "     The box has a public IPv4 (${REMOTE_PUB4:-?}) that lets it be reached"
+  echo "     directly, so a relay here means this machine's network (a symmetric"
+  echo "     NAT, or UDP being filtered) is blocking the direct handshake."
   if [[ -z "$LOCAL_V6" ]]; then
-    echo "       - this machine has NO global IPv6 (its network is IPv4-only)"
+    echo "     There is no IPv6 path either: this machine has NO global IPv6"
+    echo "     (its network is IPv4-only), while the box does have global IPv6"
+    echo "     (${REMOTE_V6:-?})."
   else
-    echo "       - this machine has global IPv6 (${LOCAL_V6%%/*})"
+    echo "     This machine has global IPv6 (${LOCAL_V6%%/*}); the box has"
+    echo "     IPv6 too, so the relay is likely a transient mapping loss rather"
+    echo "     than a permanent addressing gap."
   fi
-  if [[ -z "$REMOTE_V6" ]]; then
-    echo "       - the box has NO global IPv6"
-  else
-    echo "       - the box has global IPv6 (${REMOTE_V6%%/*})"
-  fi
-  echo "       - the box has no public IPv4 (private OCI VNIC, by design)"
-  echo "     Fix: get IPv6 on this network (router/ISP). Tailscale will then take"
-  echo "     the direct IPv6 path and this test should jump orders of magnitude."
+  echo "     Fixes, in order of preference: move to a network that does not"
+  echo "     interfere with the NAT mapping (a phone hotspot usually works), or"
+  echo "     enable IPv6 on this network — either restores a direct path."
 fi

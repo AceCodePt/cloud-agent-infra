@@ -47,7 +47,7 @@ if [[ "$PROVIDER" == hetzner ]]; then
   assert "no inbound firewall rule opens the server" "$OPEN" "none"
 elif [[ "$PROVIDER" == oci ]]; then
   OPEN="$(oci_public_ingress)"
-  assert "no public IPv4 and no unexpected inbound rule (only IPv6 UDP 41641 allowed)" "$OPEN" "none"
+  assert "public IPv4 present; only IPv4+IPv6 UDP 41641 inbound (Tailscale WireGuard)" "$OPEN" "none"
 else
   RENDERED="$(gcloud_instance describe --format='value(metadata.items)' 2>/dev/null)"
   if [[ -z "$RENDERED" ]]; then

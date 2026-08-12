@@ -237,11 +237,39 @@ fallback. The rest of this section is the record of the GCP → Hetzner move.
 Oracle-allocated /56 GUA prefix (`is_ipv6enabled` on the VCN) and a public IPv6
 on its VNIC, plus an internet gateway with a `::/0` route. This lets Tailscale
 establish a **direct, non-DERP** connection from any IPv6-capable network (the
-phone on 5G goes direct; the laptop needs IPv6, e.g. tethered to the phone).
-Posture change: the security list's only ingress is now **IPv6 UDP 41641**
-(Tailscale/WireGuard) from `::/0`; IPv4 still has zero public ingress and no
-public IPv4. Verified by `verify.sh` (28 checks) and by
+phone on 5G goes direct). Posture change: the security list's only ingress is
+now **IPv4+IPv6 UDP 41641** (Tailscale/WireGuard) from `0.0.0.0/0` and `::/0`.
+Verified by `verify.sh` (28 checks) and by
 `tailscale ping` showing `direct [2a02:…]` to the phone vs DERP before.
+
+**Direct IPv4 path — reserved public IPv4 (2026-08-12, final):** the box got a
+**reserved public IPv4** (`oci_core_public_ip`, stable across rebuilds) as a
+direct Tailscale endpoint, replacing the NAT gateway (IPv4 egress now flows
+through the internet gateway sourcing the public IP). Measured on an office
+network behind a **symmetric NAT**: without the public IP the tunnel was stuck
+on DERP(par) at ~110 ms / ~1 Mbit/s; with it, `tailscale ping` goes **direct**
+(RTT 5–9 ms) and `./run speedtest` measured **~460–500 Mbit/s up / 168 Mbit/s
+down**. A public endpoint is what makes direct IPv4 possible at all from
+symmetric-NAT networks — the NAT-return trick (no public IP, ride the NAT
+gateway's outbound mapping) only worked from friendly cone-NAT networks like
+home, not the office.
+
+**Reserved vs ephemeral:** reserved is kept. The box is disposable and rebuilt
+often, and an ephemeral IP would change every rebuild, forcing a DERP window
+while peers re-learn the endpoint. Reserved is $0 on OCI, survives `tf destroy
+-target=oci_core_instance.agent && ./run up`, and keeps the address's
+reputation history entirely the box's own. Scanner exposure is identical for
+both (both are Oracle-pool IPv4 reachable via the IGW); the difference is
+stability and reputation ownership.
+
+**Security posture (final):** no NAT gateway; a **reserved public IPv4 + a
+public IPv6**; the security list's ONLY ingress is IPv4 UDP 41641 from
+0.0.0.0/0 and IPv6 UDP 41641 from ::/0 (Tailscale/WireGuard). WireGuard does
+not respond to unauthenticated handshakes, so the exposed port is
+cryptographically silent; TCP 22 and everything else stay closed at the edge.
+This is a modest, accepted tradeoff — a directly reachable UDP port that only
+WireGuard keys can use — in exchange for full-speed direct connectivity from
+any network. Oracle does not charge for public IPv4s, so cost was not a factor.
 
 
 What unblocked it:
