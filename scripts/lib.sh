@@ -110,6 +110,68 @@ SSH_TIMEOUT="${SSH_TIMEOUT:-20}"
 
 ssh_vm() { timeout "$SSH_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SSH_USER@$INSTANCE" "$@"; }
 
+# --- Remote-exec diagnostics ---
+
+# run_remote <desc> <cmd...> — run a remote command; on failure print the ssh
+# exit code (124 timeout / 255 connect-fail / n remote-rc) and the remote
+# stderr, then return non-zero. Use on "this must work" steps instead of
+# `ssh_vm ... >/dev/null 2>&1 || die`.
+run_remote() {
+  local desc="$1"
+  shift
+  local rc out
+  out="$(mktemp)"
+  if timeout "$SSH_TIMEOUT" ssh "${SSH_OPTS[@]}" "$SSH_USER@$INSTANCE" "$@" 2>"$out"; then
+    rm -f "$out"
+    return 0
+  fi
+  rc=$?
+  echo "ERROR: $desc failed" >&2
+  echo "  (ssh exit code: $rc)" >&2
+  case "$rc" in
+  124) echo "  cause: the SSH session TIMED OUT after ${SSH_TIMEOUT}s (box hung or the tunnel stalled)" >&2 ;;
+  255) echo "  cause: ssh could not connect (host unreachable, auth, or a changed host key)" >&2 ;;
+  *) echo "  cause: the remote command exited non-zero" >&2 ;;
+  esac
+  if [[ -s "$out" ]]; then
+    echo "  remote output:" >&2
+    sed 's/^/    /' "$out" >&2
+  fi
+  rm -f "$out"
+  return "$rc"
+}
+
+# start_transient <unit> <reap> <cmd...> — start a transient systemd unit and
+# confirm it actually came up (systemd-run returns 0 even if the process inside
+# dies, e.g. "Address already in use"); assert active, print the journal on
+# failure. Reap any unit matching glob <reap> ('' to skip) so a leftover from a
+# crashed prior run can't hold the port. Prints the unit name on success.
+start_transient() {
+  local unit="$1"
+  local reap="$2"
+  shift 2
+  local remote_cmd="$1"
+  if [[ -n "$reap" ]]; then
+    run_remote "reaping stale units $reap" \
+      "sudo systemctl stop '$reap' 2>/dev/null; sudo systemctl reset-failed '$reap' 2>/dev/null; true" || return $?
+  else
+    run_remote "stopping any leftover $unit" \
+      "sudo systemctl stop '$unit' 2>/dev/null; sudo systemctl reset-failed '$unit' 2>/dev/null; true" || return $?
+  fi
+  run_remote "starting transient unit $unit" \
+    "sudo systemd-run --unit='$unit' --collect $remote_cmd" || return $?
+  for _ in $(seq 1 20); do
+    if [[ "$(ssh_vm "systemctl is-active '$unit'" 2>/dev/null)" == active ]]; then
+      echo "$unit"
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "ERROR: transient unit $unit never became active (running)" >&2
+  run_remote "reading $unit journal" "sudo journalctl -u '$unit' --no-pager -n 15" || true
+  return 1
+}
+
 vm_online() {
   command -v tailscale >/dev/null 2>&1 || return 1
   tailscale status --json 2>/dev/null | python3 -c '

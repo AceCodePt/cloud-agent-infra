@@ -89,7 +89,8 @@ open)
 
   trap stop_vnc EXIT INT TERM
   note "starting x11vnc on the box (loopback only, no password -- see operating.md)"
-  rsh "sudo -n systemctl start x11vnc"
+  run_remote "starting x11vnc on the box" \
+    "export PATH=/usr/local/sbin:/usr/sbin:/sbin:\$PATH; sudo -n systemctl start x11vnc"
 
   pid="$(browser_pid)"
   if [[ -n "$pid" ]]; then

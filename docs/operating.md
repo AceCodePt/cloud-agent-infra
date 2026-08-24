@@ -468,3 +468,12 @@ upload (local → box) and download (box → local) in Mbit/s. `IPERF3_DURATION`
   gcloud could not read the VM at all — almost always a credential mismatch, not a
   deleted VM. `up` refuses to guess there, so it cannot build a second VM while
   the real one runs invisibly.
+- **A remote command's exit code lies about whether it worked.** `systemd-run`
+  returns 0 even when the process inside dies instantly (e.g. iperf3 "Address
+  already in use"), and `ssh_vm ... >/dev/null 2>&1 || die <generic>` hides the
+  cause. Use the lib.sh primitives: **`run_remote <desc> <cmd...>`** for "this
+  must work" steps (prints the ssh exit code, failure class, and remote stderr),
+  and **`start_transient <unit> <reap> <cmd...>`** to launch a transient unit and
+  confirm it actually came up (asserts active, prints the journal on failure),
+  reaping stale units matching `<reap>` so a leftover from a crashed run can't
+  hold the port. `./run speedtest` uses both for the iperf3 server.

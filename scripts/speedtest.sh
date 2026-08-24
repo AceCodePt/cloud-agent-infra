@@ -12,13 +12,14 @@ command -v iperf3 >/dev/null 2>&1 ||
   die "iperf3 is not installed here. Install it (dnf/apt/brew install iperf3)."
 
 note "checking $INSTANCE is reachable and has iperf3"
-ssh_vm 'command -v iperf3 >/dev/null 2>&1' ||
+run_remote "reaching $INSTANCE over SSH" 'command -v iperf3 >/dev/null 2>&1' ||
   die "iperf3 is not installed on $INSTANCE (install with: dnf install iperf3)"
 
-TS_IP="$(ssh_vm 'tailscale ip -4' 2>/dev/null | tr -d ' \n' | head -1)"
-[[ -n "$TS_IP" ]] || die "could not read $INSTANCE's Tailscale IPv4"
+TS_IP="$(run_remote "reading $INSTANCE's Tailscale IPv4" 'tailscale ip -4')" &&
+  TS_IP="${TS_IP//[$' \n']/}" ||
+  die "could not read $INSTANCE's Tailscale IPv4"
 
-UNIT="iperf3-$$"
+UNIT="iperf3-server"
 PORT_OPENED=""
 cleanup() {
   if [[ -n "$PORT_OPENED" ]]; then
@@ -35,8 +36,10 @@ note "opening port $PORT/tcp on $INSTANCE (closes when the test finishes)"
 ssh_vm "sudo firewall-cmd --add-port=$PORT/tcp" >/dev/null 2>&1 &&
   PORT_OPENED=1
 
+# start_transient reaps any stale iperf3-* unit and asserts the server is
+# actually running (systemd-run alone returns 0 even on a failed bind).
 note "starting iperf3 server on $INSTANCE ($TS_IP:$PORT)"
-ssh_vm "sudo systemd-run --unit=$UNIT --collect /usr/bin/iperf3 -s -p $PORT -B $TS_IP" >/dev/null 2>&1 ||
+start_transient "$UNIT" 'iperf3-*' "/usr/bin/iperf3 -s -p $PORT -B $TS_IP" >/dev/null ||
   die "could not start the iperf3 server on $INSTANCE"
 
 ready=false
