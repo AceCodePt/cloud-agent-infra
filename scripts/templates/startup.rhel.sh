@@ -94,6 +94,28 @@ else
   echo "!! data disk not mountable yet (label $DATA_LABEL absent)"
 fi
 
+# Oracle Linux splits the boot LVM into a fixed root (29.5G) + oled; grow root
+# into any unallocated VG space from a larger boot volume. Oracle-only (other
+# providers' images grow root via cloud-init). Idempotent when nothing is free.
+if [ -d /usr/libexec/oracle-cloud-agent ]; then
+  ROOT_LV="$(findmnt -no SOURCE / 2>/dev/null || true)"
+  case "$ROOT_LV" in
+    /dev/mapper/* | /dev/*vg*)
+      FREE_EXTENTS="$(vgs --noheadings -o vg_free_count 2>/dev/null | tr -d ' ')"
+      if [ -n "$FREE_EXTENTS" ] && [ "$FREE_EXTENTS" -gt 0 ] 2>/dev/null; then
+        if lvextend -l +100%FREE "$ROOT_LV" >/dev/null 2>&1; then
+          if ! xfs_growfs / >/dev/null 2>&1; then
+            resize2fs "$ROOT_LV" >/dev/null 2>&1 || true
+          fi
+          echo ">> grew $ROOT_LV to $(df -h / 2>/dev/null | awk 'NR==2{print $2}')"
+        else
+          echo "!! lvextend $ROOT_LV failed (continuing with the image's root size)"
+        fi
+      fi
+      ;;
+  esac
+fi
+
 # Tailscale SSH (the box's only inbound path) can stall — banner never answers —
 # when SELinux is enforcing (https://tailscale.com/s/ssh-selinux). Drop to
 # permissive now so tailscaled starts under a mode its SSH server works in.

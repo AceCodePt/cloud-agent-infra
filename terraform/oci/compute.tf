@@ -84,9 +84,11 @@ resource "oci_core_instance" "agent" {
   }
 
   source_details {
-    source_type             = "image"
-    source_id               = local.source_id
-    boot_volume_size_in_gbs = 50
+    source_type = "image"
+    source_id   = local.source_id
+    # 100 GB: startup.rhel.sh grows the image's fixed 29.5G root LV into the
+    # extra. source_details is ignore_changes'd, so this is bootstrap-time only.
+    boot_volume_size_in_gbs = 100
   }
 
   lifecycle {
