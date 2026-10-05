@@ -144,7 +144,7 @@ echo "idle_check=${IDLE_OUT:-NO_DATA}"
 echo "idle_mode=$(cat /mnt/data/idle-check/burn.mode 2>/dev/null || echo auto)"
 echo "idle_level=$(cat /mnt/data/idle-check/burn.level 2>/dev/null || echo full)"
 
-for t in fzf direnv mise nvim unzip; do
+for t in fzf direnv mise nvim unzip tree-sitter; do
   command -v "$t" >/dev/null 2>&1 \
     && echo "${t}=present" || echo "${t}=missing"
 done
@@ -248,6 +248,7 @@ else
   pkg_assert "python installed via mise" python_shim
   pkg_assert "tmux 3.3a built from source" tmux_33a
   pkg_assert "neovim installed" nvim
+  pkg_assert "tree-sitter-cli installed" tree-sitter
   pkg_assert "unzip installed" unzip
 fi
 
