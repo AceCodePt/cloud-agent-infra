@@ -131,7 +131,7 @@ if ! command -v tailscale >/dev/null 2>&1; then
   echo ">> installing tailscale (install.sh fetched, checksum-pinned, executed)"
   # Never execute an unvetted remote script: a compromised or rewritten upstream
   # install.sh must be refused.
-  TS_INSTALL_SHA256="805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e"
+  TS_INSTALL_SHA256="4207f322e10ad26b3054abe7c99dfb54da09843c8d0a50d0a82f8eff4972a0d1"
   TS_INSTALL="$(mktemp)"
   if curl -fsSL https://tailscale.com/install.sh -o "$TS_INSTALL"; then
     if [ "$(sha256sum "$TS_INSTALL" | awk '{print $1}')" = "$TS_INSTALL_SHA256" ]; then
