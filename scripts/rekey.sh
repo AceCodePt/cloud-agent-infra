@@ -17,14 +17,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci ]]; then
+if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci || "$PROVIDER" == vultr ]]; then
   STATUS="$(instance_status)"
   if [[ "$STATUS" == absent ]]; then
     die "instance '$INSTANCE' does not exist, so there is nothing to rekey.
   For a fresh build use: ./run rebuild"
   fi
   if [[ "$STATUS" == unknown ]]; then
-    die "cannot reach the $([[ "$PROVIDER" == oci ]] && echo OCI || echo Hetzner) API. Check the credentials in config.env."
+    die "cannot reach the $PROVIDER API. Check the credentials in config.env."
   fi
 
   "$SCRIPT_DIR"/tailscale-api.sh mint
@@ -42,7 +42,7 @@ sudo systemctl restart agent-startup
 EOF
   then
     die "could not reach $SSH_USER@$INSTANCE over the tailnet to deliver the key.
-  If the box is not online, use the OCI serial console to write /etc/agent/authkey,
+  If the box is not online, use the provider's web console to write /etc/agent/authkey,
   or rebuild with: ./run rebuild"
   fi
 

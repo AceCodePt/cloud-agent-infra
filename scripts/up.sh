@@ -70,6 +70,10 @@ if [[ "$BEFORE" == unknown ]]; then
     die "cannot determine whether server '$INSTANCE' exists — the Hetzner API
   could not be read. Check HETZNER_API_KEY in config.env."
   fi
+  if [[ "$PROVIDER" == vultr ]]; then
+    die "cannot determine whether instance '$INSTANCE' exists — the Vultr API
+  could not be read. Check VULTR_API_KEY in config.env."
+  fi
   if [[ "$PROVIDER" == oci ]]; then
     die "cannot determine whether instance '$INSTANCE' exists — the OCI CLI
   could not read it. Check OCI_* credentials in config.env and that 'oci' is on PATH."
@@ -141,6 +145,10 @@ RUNNING)
       warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
   cannot be delivered remotely. Open the Hetzner Cloud web console (VNC) for
   $INSTANCE, or use a rescue system — then fix /etc/agent/authkey or reboot."
+    elif [[ "$PROVIDER" == vultr ]]; then
+      warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
+  cannot be delivered remotely. Open the Vultr web console (KVM) for $INSTANCE,
+  then fix /etc/agent/authkey or reboot."
     elif [[ "$PROVIDER" == oci ]]; then
       warn "$INSTANCE is not on the tailnet, so SSH is unreachable and the key
   cannot be delivered remotely. Use the OCI Cloud Shell serial console for

@@ -44,6 +44,10 @@ else
     echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
     echo "   Skipping terraform destroy. If a server still exists, delete it in the"
     echo "   Hetzner Cloud console or with:  hcloud server delete $INSTANCE"
+  elif [[ "$PROVIDER" == vultr ]]; then
+    echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
+    echo "   Skipping terraform destroy. If an instance still exists, delete it in the"
+    echo "   Vultr console or with:  vultr-cli instance delete <id>"
   elif [[ "$PROVIDER" == oci ]]; then
     echo ">> No initialized Terraform state (terraform/backend.tf or terraform/.terraform missing)."
     echo "   Skipping terraform destroy. If an instance still exists, delete it in the"
@@ -70,6 +74,8 @@ if [[ -n "$LIVE" ]]; then
 else
   if [[ "$PROVIDER" == hetzner ]]; then
     echo ">> Verified with the Hetzner API: no server or volume remains."
+  elif [[ "$PROVIDER" == vultr ]]; then
+    echo ">> Verified with the Vultr API: no instance or block storage remains."
   elif [[ "$PROVIDER" == oci ]]; then
     echo ">> Verified with OCI: no instance or block volume remains."
   else

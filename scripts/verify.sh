@@ -32,6 +32,8 @@ STATUS="$(instance_status)"
 if [[ "$STATUS" == unknown ]]; then
   if [[ "$PROVIDER" == hetzner ]]; then
     bad "cannot read server $INSTANCE from the Hetzner API (token problem, not the VM)"
+  elif [[ "$PROVIDER" == vultr ]]; then
+    bad "cannot read instance $INSTANCE from the Vultr API (token problem, not the VM)"
   elif [[ "$PROVIDER" == oci ]]; then
     bad "cannot read instance $INSTANCE from OCI (credential problem, not the VM)"
   else
@@ -45,6 +47,9 @@ fi
 if [[ "$PROVIDER" == hetzner ]]; then
   OPEN="$(hz_public_ingress)"
   assert "no inbound firewall rule opens the server" "$OPEN" "none"
+elif [[ "$PROVIDER" == vultr ]]; then
+  OPEN="$(vultr_public_ingress)"
+  assert "firewall group attached; only UDP 41641 inbound (Tailscale WireGuard)" "$OPEN" "none"
 elif [[ "$PROVIDER" == oci ]]; then
   OPEN="$(oci_public_ingress)"
   assert "public IPv4 present; only IPv4+IPv6 UDP 41641 inbound (Tailscale WireGuard)" "$OPEN" "none"

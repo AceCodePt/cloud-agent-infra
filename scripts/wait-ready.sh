@@ -55,6 +55,13 @@ while :; do
   that boots but never joins the tailnet usually means the auth key was spent,
   revoked, expired, or missing (there is no public inbound, so it just looks
   dead). Recover with: ./run rekey"
+    elif [[ "$PROVIDER" == vultr ]]; then
+      die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
+  last probe issue: ${last_probe_issue:-none}
+  Inspect the boot with the Vultr web console (KVM) for $INSTANCE. A VM that
+  boots but never joins the tailnet usually means the auth key was spent,
+  revoked, expired, or missing (there is no public inbound, so it just looks
+  dead). Recover with: ./run rekey"
     else
       die "timed out after ${elapsed}s. tailnet=$joined startup_complete=$complete packages=$packages_done
   last probe issue: ${last_probe_issue:-none}
@@ -74,7 +81,7 @@ while :; do
     fi
   fi
 
-  if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci ]]; then
+  if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci || "$PROVIDER" == vultr ]]; then
     SERIAL=""
   else
     SERIAL="$(gcloud_instance get-serial-port-output 2>/dev/null || true)"
@@ -137,7 +144,7 @@ while :; do
   fi
 
   if ! $packages_done; then
-    if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci ]]; then
+    if [[ "$PROVIDER" == hetzner || "$PROVIDER" == oci || "$PROVIDER" == vultr ]]; then
       PKG="$(ssh_vm 'systemctl is-active agent-packages' 2>/dev/null || true)"
       case "$PKG" in
       active)

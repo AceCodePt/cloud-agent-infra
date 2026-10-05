@@ -27,6 +27,7 @@ load_config() {
   STATE_BUCKET="${PROJECT_ID}-tf-state"
   API_KEY="${TAILSCALE_API_KEY:-}"
   HZ_API_KEY="${HETZNER_API_KEY:-}"
+  VT_API_KEY="${VULTR_API_KEY:-}"
   HZ_OBJECT_ACCESS_KEY="${HETZNER_OBJECT_ACCESS_KEY:-}"
   HZ_OBJECT_SECRET_KEY="${HETZNER_OBJECT_SECRET_KEY:-}"
   HZ_OBJECT_BUCKET="${TF_STATE_BUCKET:-}"
@@ -46,8 +47,8 @@ load_config() {
   fi
 
   case "$PROVIDER" in
-  gcp | hetzner | oci) ;;
-  *) die "unknown PROVIDER '$PROVIDER' in $file (want gcp, hetzner or oci)" ;;
+  gcp | hetzner | oci | vultr) ;;
+  *) die "unknown PROVIDER '$PROVIDER' in $file (want gcp, hetzner, oci or vultr)" ;;
   esac
 
   # OCI Terraform reads credentials from TF_VAR_* env vars (config.env holds the
@@ -76,6 +77,7 @@ provider_source() {
   case "$PROVIDER" in
   oci) echo "registry.terraform.io/oracle/oci" ;;
   hetzner) echo "registry.terraform.io/hetznercloud/hcloud" ;;
+  vultr) echo "registry.terraform.io/vultr/vultr" ;;
   gcp) echo "registry.terraform.io/hashicorp/google" ;;
   esac
 }
@@ -461,6 +463,104 @@ print("none")
 ' 2>/dev/null
 }
 
+# --- Vultr helpers (used only when PROVIDER=vultr) ---
+
+VULTR_BASE="https://api.vultr.com/v2"
+
+require_vultr_key() {
+  [[ -n "$VT_API_KEY" ]] || die "VULTR_API_KEY is not set in config.env.
+  Create one at my.vultr.com -> Account -> API."
+}
+
+vultr_api() { # method path [body]
+  local method="$1" path="$2" body="${3:-}"
+  require_vultr_key
+  # -4: Vultr API keys can be IP-allowlisted, and the allowlist is IPv4-only —
+  # a v6 egress would get "Unauthorized IP address". Force IPv4.
+  local args=(-4 -s -H "Authorization: Bearer $VT_API_KEY")
+  [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' -d "$body")
+  curl "${args[@]}" -X "$method" "$VULTR_BASE$path"
+}
+
+vultr_instances_json() {
+  vultr_api GET "/instances"
+}
+
+# The newest instance whose label is $INSTANCE. Vultr deletes on destroy, so
+# this is normally 0 or 1; ordering by creation keeps a stale duplicate from
+# shadowing the live one.
+vultr_instance_field() { # field
+  vultr_instances_json | jq -r --arg n "$INSTANCE" --arg f "$1" \
+    '[.instances[]? | select(.label==$n)] | sort_by(.date_created) | last | .[$f] // empty' 2>/dev/null
+}
+
+vultr_instance_id() { vultr_instance_field id; }
+
+vultr_instance_status() {
+  local resp n power
+  resp="$(vultr_instances_json)" || { printf 'unknown'; return 0; }
+  n="$(printf '%s' "$resp" | jq -r --arg n "$INSTANCE" '[.instances[]? | select(.label==$n)] | length' 2>/dev/null)"
+  [[ -n "$n" ]] || { printf 'unknown'; return 0; }
+  if [[ "$n" == 0 ]]; then
+    printf 'absent'
+    return 0
+  fi
+  power="$(printf '%s' "$resp" | jq -r --arg n "$INSTANCE" '[.instances[]? | select(.label==$n)] | sort_by(.date_created) | last | .power_status' 2>/dev/null)"
+  case "$power" in
+  running) printf 'RUNNING' ;;
+  stopped) printf 'TERMINATED' ;;
+  *) printf 'STARTING' ;;
+  esac
+}
+
+vultr_instance_start() {
+  local id
+  id="$(vultr_instance_id)"
+  [[ -n "$id" ]] || die "no instance labeled '$INSTANCE' in the Vultr account"
+  vultr_api POST "/instances/$id/start" >/dev/null
+}
+
+vultr_instance_stop() {
+  local id
+  id="$(vultr_instance_id)"
+  [[ -n "$id" ]] || die "no instance labeled '$INSTANCE' in the Vultr account"
+  vultr_api POST "/instances/$id/halt" >/dev/null
+}
+
+vultr_live_resources() {
+  local live=""
+  [[ -n "$(vultr_instance_id)" ]] && live="$live instance/$INSTANCE"
+  vultr_api GET "/blocks" | jq -e --arg n "${INSTANCE}-data" \
+    '.blocks[]? | select(.label==$n)' >/dev/null 2>&1 && live="$live volume/${INSTANCE}-data"
+  printf '%s' "${live# }"
+}
+
+# Asserts the repo's inbound posture on Vultr: a firewall group IS attached (an
+# instance with none has no inbound filtering at all), and its only rules are
+# Tailscale's WireGuard port — UDP 41641 on IPv4 and/or IPv6. Anything else is
+# drift. Prints exactly 'none' when the posture holds; anything else fails.
+vultr_public_ingress() {
+  local id fw resp
+  id="$(vultr_instance_id)"
+  [[ -n "$id" ]] || { printf 'no instance found'; return 0; }
+  fw="$(vultr_api GET "/instances/$id" | jq -r '.instance.firewall_group_id // empty' 2>/dev/null)"
+  if [[ -z "$fw" ]]; then
+    printf 'no firewall group applied to instance'
+    return 0
+  fi
+  # Rules are a SUB-resource: GET /firewalls/{id} returns only the group, so the
+  # rules must be fetched from /firewalls/{id}/rules.
+  resp="$(vultr_api GET "/firewalls/$fw/rules")"
+  printf '%s' "$resp" | jq -r --arg fw "$fw" '
+    [.firewall_rules[]?
+     | select(.action=="accept" and .direction=="in")
+     | select((.protocol=="udp" and .port=="41641") | not)] as $bad
+    | if ($bad|length) > 0
+      then "unexpected inbound rule on firewall group \($fw)"
+      else "none" end
+  ' 2>/dev/null
+}
+
 # --- provider dispatch ---
 
 instance_status() {
@@ -468,6 +568,8 @@ instance_status() {
     hz_server_status
   elif [[ "$PROVIDER" == oci ]]; then
     oci_instance_status
+  elif [[ "$PROVIDER" == vultr ]]; then
+    vultr_instance_status
   else
     local out err rc=0
     err="$(mktemp)"
@@ -496,6 +598,8 @@ instance_id() {
     hz_server_id
   elif [[ "$PROVIDER" == oci ]]; then
     oci_find_instance
+  elif [[ "$PROVIDER" == vultr ]]; then
+    vultr_instance_id
   else
     gcloud_instance describe --format='value(id)'
   fi
@@ -506,6 +610,8 @@ instance_start() {
     hz_server_start
   elif [[ "$PROVIDER" == oci ]]; then
     oci_instance_start
+  elif [[ "$PROVIDER" == vultr ]]; then
+    vultr_instance_start
   else
     gcloud_instance start
   fi
@@ -516,16 +622,18 @@ instance_stop() {
     hz_server_stop
   elif [[ "$PROVIDER" == oci ]]; then
     oci_instance_stop
+  elif [[ "$PROVIDER" == vultr ]]; then
+    vultr_instance_stop
   else
     gcloud_instance stop
   fi
 }
 
 # Re-run phase A. On gcp this is the metadata runner (IAP) or a stop/start; on
-# hetzner the guest re-runs itself via systemd — no cloud vendor mechanism.
+# hetzner/vultr the guest re-runs itself via systemd — no cloud vendor mechanism.
 rerun_startup_script() {
   local method="${1:-ssh}"
-  if [[ "$PROVIDER" == hetzner ]]; then
+  if [[ "$PROVIDER" == hetzner || "$PROVIDER" == vultr ]]; then
     if [[ "$method" == reboot ]]; then
       note "stop/start $INSTANCE so agent-startup re-runs"
       instance_stop
@@ -592,6 +700,11 @@ live_resources() {
 
   if [[ "$PROVIDER" == oci ]]; then
     oci_live_resources
+    return 0
+  fi
+
+  if [[ "$PROVIDER" == vultr ]]; then
+    vultr_live_resources
     return 0
   fi
 

@@ -32,7 +32,7 @@ shared_requirements() {
   section "Shared (both providers)"
   if [[ -n "${TF_VAR_instance_name:-}" ]]; then ok "TF_VAR_instance_name" "$TF_VAR_instance_name"; else miss "TF_VAR_instance_name" "instance name"; fi
   if [[ -n "${TF_VAR_ssh_user:-}" ]]; then ok "TF_VAR_ssh_user" "$TF_VAR_ssh_user"; else miss "TF_VAR_ssh_user" "account on the VM"; fi
-  if [[ -n "${TF_VAR_machine_type:-}" ]]; then ok "TF_VAR_machine_type" "$TF_VAR_machine_type"; else miss "TF_VAR_machine_type" "e.g. cx33 (hetzner) / e2-standard-2 (gcp) / VM.Standard.A1.Flex (oci)"; fi
+  if [[ -n "${TF_VAR_machine_type:-}" ]]; then ok "TF_VAR_machine_type" "$TF_VAR_machine_type"; else miss "TF_VAR_machine_type" "e.g. cx33 (hetzner) / e2-standard-2 (gcp) / VM.Standard.A1.Flex (oci) / vhp-4c-8gb-amd (vultr)"; fi
   if [[ -n "${TAILSCALE_API_KEY:-}" ]]; then
     ok "TAILSCALE_API_KEY" "mints single-use auth keys: login.tailscale.com/admin/settings/keys"
   else
@@ -55,6 +55,19 @@ oci_section() {
   line "  public ingress is exactly IPv4+IPv6 UDP 41641 (Tailscale direct path)."
   line "  SSH only via Tailscale; data on a labeled block volume at /mnt/data."
   line "  Free tier: VM.Standard.A1.Flex, up to 4 OCPU / 24 GB / 200 GB block."
+}
+
+vultr_section() {
+  section "Provider: vultr  (terraform/vultr/)"
+  if [[ -n "$VT_API_KEY" ]]; then
+    ok "VULTR_API_KEY" "personal access token (rw): my.vultr.com -> Account -> API"
+  else
+    miss "VULTR_API_KEY" "personal access token (rw): my.vultr.com -> Account -> API"
+  fi
+  if [[ -n "${TF_VAR_region:-}" ]]; then ok "TF_VAR_region" "$TF_VAR_region (tlv = Tel Aviv, in-country)"; else miss "TF_VAR_region" "region (tlv)"; fi
+  line "  Security posture: firewall group attached, inbound is exactly UDP 41641"
+  line "  (Tailscale direct path); SSH only via Tailscale; data on a 40 GB+ storage_opt"
+  line "  block volume at /mnt/data. No public SSH."
 }
 
 hetzner_section() {
@@ -100,11 +113,17 @@ all)
   hetzner_section
   oci_section
   gcp_section
+  vultr_section
   ;;
 hetzner)
   echo "PROVIDER=${PROVIDER}  (config.env)"
   shared_requirements
   hetzner_section
+  ;;
+vultr)
+  echo "PROVIDER=${PROVIDER}  (config.env)"
+  shared_requirements
+  vultr_section
   ;;
 oci)
   echo "PROVIDER=${PROVIDER}  (config.env)"
@@ -117,7 +136,7 @@ gcp)
   gcp_section
   ;;
 *)
-  echo "usage: ./run setup [gcp|hetzner|oci]" >&2
+  echo "usage: ./run setup [gcp|hetzner|oci|vultr]" >&2
   exit 1
   ;;
 esac
