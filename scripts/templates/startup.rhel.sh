@@ -901,6 +901,10 @@ if [ -n "$AGENT_USER" ] && command -v mise >/dev/null 2>&1; then
     cargo install tree-sitter-cli 2>&1 || echo "!! tree-sitter-cli install failed (non-fatal)"
   echo ">> node@latest for $AGENT_USER via mise"
   sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" PATH="/usr/local/bin:$PATH" mise use -g node@latest
+  echo ">> npm@latest for $AGENT_USER via mise"
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" PATH="/usr/local/bin:$PATH" mise use -g npm@latest
+  echo ">> python@latest for $AGENT_USER via mise"
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" PATH="/usr/local/bin:$PATH" mise use -g python@latest
 fi
 
 echo ">> wave 2: upgrade + headed-browser stack"
