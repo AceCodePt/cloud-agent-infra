@@ -803,16 +803,16 @@ if ! command -v direnv >/dev/null 2>&1; then
   fi
 fi
 
-echo ">> tmux: EL9 ships 3.2a (too old for the dotfiles config); build latest release from GitHub"
+echo ">> tmux: EL9 ships 3.2a (too old for the dotfiles config); build 3.3a from GitHub"
 $DNF install -y gcc make pkg-config libevent-devel ncurses-devel
-TMUX_VERSION="$(curl -fsSL https://api.github.com/repos/tmux/tmux/releases/latest 2>/dev/null |
-  sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
-TMUX_VERSION="${TMUX_VERSION#v}"
-if [ -z "$TMUX_VERSION" ] || [ "$(tmux -V 2>/dev/null | cut -d' ' -f2)" = "$TMUX_VERSION" ]; then
-  echo ">> tmux ${TMUX_VERSION:-current} already installed or latest unknown; skipping build"
+# Pinned, not "latest": tmux's tags carry no `v` prefix, so the old
+# v${TMUX_VERSION} URL 404'd and this build never actually ran.
+TMUX_VERSION="3.3a"
+if [ "$(tmux -V 2>/dev/null | cut -d' ' -f2)" = "$TMUX_VERSION" ]; then
+  echo ">> tmux $TMUX_VERSION already installed; skipping build"
 else
   TMUX_TARBALL="$(mktemp)"
-  if curl -fsSL "https://github.com/tmux/tmux/releases/download/v${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
+  if curl -fsSL "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
       -o "$TMUX_TARBALL"; then
     rm -rf "/tmp/tmux-${TMUX_VERSION}"
     tar -xzf "$TMUX_TARBALL" -C /tmp

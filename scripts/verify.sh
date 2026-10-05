@@ -158,6 +158,8 @@ done
   && echo "npm_shim=present" || echo "npm_shim=missing"
 [ -x "$HOME/.local/share/mise/shims/python" ] \
   && echo "python_shim=present" || echo "python_shim=missing"
+[ "$(tmux -V 2>/dev/null | cut -d' ' -f2)" = "3.3a" ] \
+  && echo "tmux_33a=present" || echo "tmux_33a=missing"
 VMEOF
 )"
 
@@ -244,6 +246,7 @@ else
   pkg_assert "node installed via mise" node_shim
   pkg_assert "npm installed via mise" npm_shim
   pkg_assert "python installed via mise" python_shim
+  pkg_assert "tmux 3.3a built from source" tmux_33a
   pkg_assert "neovim installed" nvim
   pkg_assert "unzip installed" unzip
 fi
