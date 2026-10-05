@@ -160,6 +160,12 @@ done
   && echo "python_shim=present" || echo "python_shim=missing"
 [ "$(tmux -V 2>/dev/null | cut -d' ' -f2)" = "3.3a" ] \
   && echo "tmux_33a=present" || echo "tmux_33a=missing"
+if [ -x "$HOME/.opencode/bin/opencode" ] \
+  && timeout 10 "$HOME/.opencode/bin/opencode" --version 2>/dev/null | grep -qE '2\.[0-9]'; then
+  echo "opencode_v2=present"
+else
+  echo "opencode_v2=missing"
+fi
 VMEOF
 )"
 
@@ -246,6 +252,7 @@ else
   pkg_assert "node installed via mise" node_shim
   pkg_assert "npm installed via mise" npm_shim
   pkg_assert "python installed via mise" python_shim
+  pkg_assert "opencode v2 installed" opencode_v2
   pkg_assert "tmux 3.3a built from source" tmux_33a
   pkg_assert "neovim installed" nvim
   pkg_assert "tree-sitter-cli installed" tree-sitter

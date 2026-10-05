@@ -905,6 +905,19 @@ if [ -n "$AGENT_USER" ] && command -v mise >/dev/null 2>&1; then
   sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" PATH="/usr/local/bin:$PATH" mise use -g python@latest
 fi
 
+# opencode v2 (AI coding agent). The official installer drops a self-contained
+# binary in ~/.opencode/bin and adds it to the login shell's PATH; symlink it
+# into /usr/local/bin too so non-interactive shells (./run ssh, verify) see it.
+echo ">> opencode v2 (latest) for $AGENT_USER"
+if [ -n "$AGENT_USER" ]; then
+  sudo -u "$AGENT_USER" env HOME="/home/$AGENT_USER" SHELL=/bin/zsh \
+    bash -c 'curl -fsSL https://opencode.ai/v2/install | bash' \
+    || echo "!! opencode install failed (non-fatal)"
+  if [ -x "/home/$AGENT_USER/.opencode/bin/opencode" ]; then
+    ln -sf "/home/$AGENT_USER/.opencode/bin/opencode" /usr/local/bin/opencode
+  fi
+fi
+
 echo ">> wave 2: upgrade + headed-browser stack"
 # --allowerasing: OCI's tuned-profiles-oci pins an older tuned; upgrading hits a
 # version conflict that is safe to resolve (it only replaces the conflicting
