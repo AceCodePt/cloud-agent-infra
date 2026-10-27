@@ -1,0 +1,12 @@
+{
+  "$comment": "Project knowledge only. Anything here that every project would copy verbatim belongs in orch instead.",
+  "baseBranch": "main",
+  "verify": {
+    "$comment": "How the acceptance hook (hooks/session-idle) is bounded. retryCap caps how many times a failing verification re-prompts the agent before the task lands on needs-review.",
+    "retryCap": 3
+  },
+  "scheduler": {
+    "$comment": "Auto-dispatch of todo tasks (wait_human_start: false only): the daemon fills free maxConcurrent slots with the next unclaimed task. opencode-orchestrator turns this on by default for `orch init` and `orch project create`; a cloned project starts with it off. Edit with `orch project scheduler <n>`; only the committed copy on the base branch applies.",
+    "enabled": false
+  }
+}
