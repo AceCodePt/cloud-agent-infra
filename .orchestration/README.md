@@ -50,6 +50,14 @@ authority: `orch project scheduler <n>` writes the working-tree copy for you to
 review and commit. A machine-wide cap across all projects lives outside the repo in
 `~/.config/orch/daemon.json` (`orch daemon budget`).
 
+The same file's `cron.jobs` block schedules opencode jobs. Each entry
+needs a `name`, a five-field `schedule`, and a `prompt` (inline markdown) or
+`promptFile` (a committed path); `model` and `agent` are optional. The daemon
+evaluates the schedule every tick in local time and, when a slot has come due
+since its last check, opens a session on the base worktree with that prompt.
+Session titles carry the slot (`orch:cron:<name>:<epoch>`), so a restart cannot
+replay one. Only trusted projects fire; `"enabled": false` turns the block off.
+
 Reference templates for every hook live outside the repo in
 `~/.config/orch/hooks/*.example` (installed by `orch init`) — one per lifecycle
 hook, the `session-idle` verification hook, and one per opencode server event

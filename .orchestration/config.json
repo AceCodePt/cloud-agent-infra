@@ -8,5 +8,21 @@
   "scheduler": {
     "$comment": "Auto-dispatch of todo tasks (wait_human_start: false only): the daemon fills free maxConcurrent slots with the next unclaimed task. opencode-orchestrator turns this on by default for `orch init` and `orch project create`; a cloned project starts with it off. Edit with `orch project scheduler <n>`; only the committed copy on the base branch applies.",
     "enabled": false
+  },
+  "cron": {
+    "$comment": "Scheduled opencode jobs, evaluated by the daemon every tick in the machine's local time. Each entry needs a name, a five-field cron schedule (minute hour day month weekday) and a prompt (inline markdown) or promptFile (a committed path); model and agent are optional. Manage them with `orch cron list|add|update|remove` or the list_jobs/add_job/update_job/remove_job tools. The daemon opens a session on the base worktree when a slot comes due; the title carries the slot, so a restart cannot replay it. Set enabled to true to arm these jobs.",
+    "enabled": false,
+    "jobs": [
+      {
+        "name": "qa",
+        "schedule": "0 9 * * *",
+        "prompt": "Run the project's QA checks and report what failed. Do not change product code; summarize failures, evidence, and the smallest fix."
+      },
+      {
+        "name": "security",
+        "schedule": "0 * * * *",
+        "prompt": "Review the last hour of changes for security problems (secrets, injection, unsafe shell, authz gaps) and report findings. Do not change code."
+      }
+    ]
   }
 }
