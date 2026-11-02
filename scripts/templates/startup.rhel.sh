@@ -94,13 +94,45 @@ else
   echo "!! data disk not mountable yet (label $DATA_LABEL absent)"
 fi
 
-# Oracle Linux splits the boot LVM into a fixed root (29.5G) + oled; grow root
-# into any unallocated VG space from a larger boot volume. Oracle-only (other
-# providers' images grow root via cloud-init). Idempotent when nothing is free.
+# Oracle Linux splits the boot LVM into a fixed root (29.5G) + oled, and the
+# platform image's partition table can stop short of the boot volume (a 100 GB
+# volume ships with a 44.5G sda3). Grow the partition and PV BEFORE the LV:
+# while the PV is the image's size the VG has no free extents, so the lvextend
+# below would silently do nothing and root stays at 29.5G. Oracle-only (other
+# providers' images grow root via cloud-init). Every step is idempotent.
 if [ -d /usr/libexec/oracle-cloud-agent ]; then
   ROOT_LV="$(findmnt -no SOURCE / 2>/dev/null || true)"
   case "$ROOT_LV" in
     /dev/mapper/* | /dev/*vg*)
+      ROOT_PV="$(pvs --noheadings -o pv_name,lv_name 2>/dev/null |
+        awk '$2=="root"{print $1; exit}' || true)"
+      if [ -z "$ROOT_PV" ]; then
+        ROOT_PV="$(pvs --noheadings -o pv_name 2>/dev/null | head -1 | tr -d ' ' || true)"
+      fi
+      if [ -n "$ROOT_PV" ]; then
+        ROOT_DISK="$(lsblk -no PKNAME "$ROOT_PV" 2>/dev/null | head -1 || true)"
+        # util-linux 2.37 (OL9) has no PARTN column: derive it from the name
+        # (sda3 -> 3, nvme0n1p3 -> 3).
+        ROOT_PART="$(lsblk -no NAME "$ROOT_PV" 2>/dev/null | head -1 || true)"
+        ROOT_PARTN="${ROOT_PART#"$ROOT_DISK"}"
+        ROOT_PARTN="${ROOT_PARTN#p}"
+        if [ -n "$ROOT_DISK" ] && [ -n "$ROOT_PARTN" ]; then
+          if command -v growpart >/dev/null 2>&1; then
+            # Exits non-zero when the partition already fills the disk; that is
+            # the normal steady state, not an error.
+            if growpart "/dev/$ROOT_DISK" "$ROOT_PARTN" >/dev/null 2>&1; then
+              echo ">> grew /dev/$ROOT_DISK$ROOT_PARTN to fill the boot volume"
+            fi
+          else
+            echo "!! growpart missing; cannot grow /dev/$ROOT_DISK$ROOT_PARTN"
+          fi
+        fi
+        # Also correct for a whole-disk PV resized at the provider: pvresize is
+        # a no-op when the PV already fills the device.
+        pvresize "$ROOT_PV" >/dev/null 2>&1 || true
+      else
+        echo "!! cannot find the PV backing $ROOT_LV; not growing root"
+      fi
       FREE_EXTENTS="$(vgs --noheadings -o vg_free_count 2>/dev/null | tr -d ' ')"
       if [ -n "$FREE_EXTENTS" ] && [ "$FREE_EXTENTS" -gt 0 ] 2>/dev/null; then
         if lvextend -l +100%FREE "$ROOT_LV" >/dev/null 2>&1; then

@@ -112,6 +112,22 @@ if mountpoint -q /mnt/data; then
 else
   echo "data_mounted=no"
 fi
+# Boot-volume capacity: the partition backing / vs the whole disk. On OCI the
+# platform image can under-partition a larger boot volume, leaving root at the
+# image's size while the rest of the disk is unallocated.
+ROOT_SRC="$(findmnt -no SOURCE / 2>/dev/null)"
+ROOT_TYPE="$(lsblk -dno TYPE "$ROOT_SRC" 2>/dev/null || true)"
+PART=""; DISK=""
+if [ "$ROOT_TYPE" = lvm ]; then
+  # PKNAME is empty for dm devices; walk the inverse tree instead.
+  PART="$(lsblk -rsno NAME,TYPE "$ROOT_SRC" 2>/dev/null | awk '$2=="part"{print $1; exit}')"
+  DISK="$(lsblk -rsno NAME,TYPE "$ROOT_SRC" 2>/dev/null | awk '$2=="disk"{print $1; exit}')"
+elif [ "$ROOT_TYPE" = part ]; then
+  PART="$(lsblk -dno NAME "$ROOT_SRC" 2>/dev/null | head -1)"
+  DISK="$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null | head -1)"
+fi
+echo "root_part_bytes=$(lsblk -bdno SIZE "/dev/$PART" 2>/dev/null | head -1 | tr -d ' ')"
+echo "root_disk_bytes=$(lsblk -bdno SIZE "/dev/$DISK" 2>/dev/null | head -1 | tr -d ' ')"
 echo "browser_owner=$(stat -c %U /mnt/data/browser 2>/dev/null || echo missing)"
 [ "$(tail -1 /usr/local/bin/headed-chromium | tr -d ' ')" = '"$@"' ] \
   && echo "chromium_args=ok" || echo "chromium_args=broken"
@@ -185,6 +201,21 @@ else
   ok "SSH to $SSH_USER@$INSTANCE works"
   assert "/mnt/data is mounted" "$(fact "$VM_FACTS" data_mounted)" "yes"
   assert "/mnt/data/browser owned by $SSH_USER" "$(fact "$VM_FACTS" browser_owner)" "$SSH_USER"
+  # OCI only: its image can leave a larger boot volume under-partitioned, so
+  # root fills up while df never sees the rest. 95% allows for GPT + /boot.
+  if [[ "$PROVIDER" == oci ]]; then
+    RP="$(fact "$VM_FACTS" root_part_bytes)"
+    RD="$(fact "$VM_FACTS" root_disk_bytes)"
+    if [[ "$RP" =~ ^[0-9]+$ && "$RD" =~ ^[0-9]+$ ]] && ((RD > 0)); then
+      if ((RP * 100 / RD >= 95)); then
+        ok "root partition uses the boot volume ($((RP / 1073741824))G of $((RD / 1073741824))G)"
+      else
+        bad "root partition is $((RP / 1073741824))G on a $((RD / 1073741824))G boot volume — unallocated space; see docs/oracle-boot-volume.md"
+      fi
+    else
+      skip "boot volume capacity (could not read partition/disk sizes)"
+    fi
+  fi
   assert "headed-chromium passes arguments through" "$(fact "$VM_FACTS" chromium_args)" "ok"
   assert "no '\$\$' in the generated wrapper" "$(fact "$VM_FACTS" dollar_bug)" "absent"
   # passwd -S reports 'L' (Debian) or 'LK' (EL9) for a locked account.

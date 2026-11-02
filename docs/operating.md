@@ -383,6 +383,11 @@ upload (local → box) and download (box → local) in Mbit/s. `IPERF3_DURATION`
   look identical.
 - **`blkid` before `mkfs`.** Don't reformat a disk that already has a filesystem
   (the startup script guards this).
+- **On OCI, a 100 GB boot volume can show as a 30 GB root.** The image's
+  partition table stops at 44.5G. The startup template now grows the partition
+  and PV before the LV — older builds only grew the LV, which no-op'd because
+  the VG had no free extents. `./run verify` fails a box that still has
+  unallocated boot-volume space. See [`oracle-boot-volume.md`](oracle-boot-volume.md).
 - **Don't symlink `/var/lib/tailscale`.** The distro `tailscaled.service` sets
   `StateDirectory=tailscale`, and systemd refuses a symlinked state dir
   (status 238). Bind-mount instead.

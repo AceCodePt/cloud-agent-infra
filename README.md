@@ -105,6 +105,7 @@ cloud-agent-infra/
 └── docs/
     ├── capabilities.md   # command ↔ script ↔ flow map
     ├── operating.md      # the operator's manual
+    ├── oracle-boot-volume.md  # OCI boot volume vs. what df reports
     ├── decisions/        # every settled question + status (see decisions/README.md)
     └── measurements.md   # the evidence those decisions rest on
 ```
